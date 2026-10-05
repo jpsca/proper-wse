@@ -498,6 +498,30 @@ class TestBroadcastDelivery:
             assert_bulk(await recv_n(late, count - 1), 1, count - 1)
         await live.close()
 
+    @pytest.mark.asyncio
+    async def test_topic_backlog_counts_what_is_not_written_yet(self, server_port):
+        """A subscriber that doesn't read leaves bytes pending on its topic;
+        once it reads them, the backlog empties."""
+        srv = make_bulk_server(server_port)
+        try:
+            assert srv.topic_backlog("bulk") == (0, 0, 0)
+            ws = await connect_slow_reader(server_port, make_token())
+            await asyncio.wait_for(ws.recv(), timeout=2.0)
+            srv.subscribe_connection(drain_until(srv, "auth_connect")[1], ["bulk"])
+            for i in range(self.COUNT):
+                srv.broadcast_local("bulk", bulk_message(i))
+            time.sleep(0.3)
+            count, total, largest = srv.topic_backlog("bulk")
+            assert count == 1 and total == largest > 1_000_000
+            await recv_n(ws, self.COUNT)
+            deadline = time.monotonic() + 5
+            while srv.topic_backlog("bulk")[1] and time.monotonic() < deadline:
+                await asyncio.sleep(0.05)
+            assert srv.topic_backlog("bulk") == (1, 0, 0)
+            await ws.close()
+        finally:
+            srv.stop()
+
 
 # ---------------------------------------------------------------------------
 # Subscriptions

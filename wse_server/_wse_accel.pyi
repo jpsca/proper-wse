@@ -483,6 +483,10 @@ class RustWSEServer:
     def get_topic_subscriber_count(self, topic: str) -> int:
         """Number of connections subscribed to a topic."""
         ...
+    def topic_backlog(self, topic: str) -> tuple[int, int, int]:
+        """(subscribers, pending bytes of all of them, pending bytes of the one
+        furthest behind): what is queued for them and not yet written."""
+        ...
     def get_queue_group_info(self, topic: str) -> dict[str, int]:
         """Get queue group info for a topic. Returns {group_name: member_count}."""
         ...

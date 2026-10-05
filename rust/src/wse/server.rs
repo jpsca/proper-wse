@@ -4959,6 +4959,25 @@ impl RustWSEServer {
             .unwrap_or(0)
     }
 
+    /// How far behind delivery is on a topic: `(subscribers, pending bytes of
+    /// all of them, pending bytes of the one furthest behind)`. Pending bytes
+    /// are queued for a connection and not yet written to its socket. A
+    /// publisher can wait while the backlog is large instead of growing it.
+    fn topic_backlog(&self, topic: &str) -> (usize, usize, usize) {
+        let mut count = 0;
+        let mut total = 0;
+        let mut largest = 0;
+        if let Some(subs) = self.shared.topic_subscribers.get(topic) {
+            for entry in subs.iter() {
+                let pending = entry.value().pending.load(Ordering::Relaxed);
+                count += 1;
+                total += pending;
+                largest = largest.max(pending);
+            }
+        }
+        (count, total, largest)
+    }
+
     /// Get queue group info for a topic. Returns dict of group_name -> member_count.
     fn get_queue_group_info(&self, py: Python<'_>, topic: &str) -> PyResult<Py<PyDict>> {
         let dict = PyDict::new(py);
