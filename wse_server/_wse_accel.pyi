@@ -330,6 +330,7 @@ class RustWSEServer:
         max_outbound_queue_bytes: int = 16_777_216,
         max_subscriptions_per_connection: int = 0,
         max_pending_handshakes: int = 512,
+        allowed_origins: list[str] | None = None,
     ) -> None: ...
 
     # -- Lifecycle ------------------------------------------------------------

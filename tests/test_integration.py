@@ -703,6 +703,28 @@ class TestServerLifecycle:
         finally:
             srv.stop()
 
+    @pytest.mark.asyncio
+    async def test_allowed_origins_refuse_other_sites(self, server_port):
+        """A browser handshake from an origin not listed gets a 403; a listed
+        origin, the handshake's own host, or no Origin header at all (not a
+        browser), connects."""
+        from websockets.exceptions import InvalidStatus
+
+        srv = RustWSEServer("127.0.0.1", server_port, allowed_origins=["https://app.example"])
+        srv.enable_drain_mode()
+        srv.start()
+        time.sleep(0.05)
+        try:
+            with pytest.raises(InvalidStatus) as refused:
+                await websockets.connect(ws_url(server_port), origin="https://evil.example")
+            assert refused.value.response.status_code == 403
+            same_host = f"http://127.0.0.1:{server_port}"  # the Host it connects to
+            for origin in ("https://app.example", "https://APP.example/", None, same_host):
+                ws = await websockets.connect(ws_url(server_port), origin=origin)
+                await ws.close()
+        finally:
+            srv.stop()
+
 
 # ---------------------------------------------------------------------------
 # Presence tracking

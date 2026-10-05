@@ -367,6 +367,7 @@ pub(crate) struct SharedStateConfig {
     pub max_outbound_queue_bytes: usize,
     pub max_subscriptions_per_connection: usize,
     pub max_pending_handshakes: usize,
+    pub allowed_origins: Vec<String>,
 }
 
 pub(crate) struct SharedState {
@@ -383,6 +384,12 @@ pub(crate) struct SharedState {
     max_pending_handshakes: usize,
     /// Connections refused because `max_pending_handshakes` were in flight.
     handshakes_dropped_total: AtomicU64,
+    /// Browser origins allowed to open a WebSocket, besides the one whose host
+    /// is the handshake's `Host`. Empty: any. A handshake without an `Origin`
+    /// header (not a browser) is always allowed; one from another origin gets
+    /// a 403, which stops other sites' pages from connecting with the user's
+    /// cookies (cross-site WebSocket hijacking).
+    allowed_origins: Arc<Vec<String>>,
     on_connect: std::sync::RwLock<Option<Py<PyAny>>>,
     on_message: std::sync::RwLock<Option<Py<PyAny>>>,
     on_disconnect: std::sync::RwLock<Option<Py<PyAny>>>,
@@ -467,6 +474,12 @@ impl SharedState {
             max_connections: cfg.max_connections,
             max_pending_handshakes: cfg.max_pending_handshakes,
             handshakes_dropped_total: AtomicU64::new(0),
+            allowed_origins: Arc::new(
+                cfg.allowed_origins
+                    .iter()
+                    .map(|o| o.trim_end_matches('/').to_ascii_lowercase())
+                    .collect(),
+            ),
             on_connect: std::sync::RwLock::new(None),
             on_message: std::sync::RwLock::new(None),
             on_disconnect: std::sync::RwLock::new(None),
@@ -1132,6 +1145,7 @@ async fn handle_connection(
     let handshake_data: Arc<std::sync::OnceLock<HandshakeResult>> =
         Arc::new(std::sync::OnceLock::new());
     let hd_clone = handshake_data.clone();
+    let allowed_origins = state.allowed_origins.clone();
 
     let mut ws_config = WebSocketConfig::default();
     ws_config.max_message_size = Some(state.max_message_size);
@@ -1146,6 +1160,24 @@ async fn handle_connection(
                 reason = "the tungstenite accept_hdr callback signature fixes Err = ErrorResponse; we cannot box it"
             )]
             move |req: &Request, response: Response| -> Result<Response, ErrorResponse> {
+                if !allowed_origins.is_empty()
+                    && let Some(origin) = req.headers().get("origin")
+                {
+                    let origin = origin.to_str().unwrap_or("").trim_end_matches('/');
+                    // The page's own host (the `Host` it connected to) is always allowed.
+                    let authority = origin.split_once("://").map_or("", |(_, rest)| rest);
+                    let same_host = req
+                        .headers()
+                        .get("host")
+                        .and_then(|h| h.to_str().ok())
+                        .is_some_and(|h| !h.is_empty() && h.eq_ignore_ascii_case(authority));
+                    if !same_host && !allowed_origins.iter().any(|a| a.eq_ignore_ascii_case(origin)) {
+                        let mut refusal = ErrorResponse::new(Some("Origin not allowed".into()));
+                        *refusal.status_mut() =
+                            tokio_tungstenite::tungstenite::http::StatusCode::FORBIDDEN;
+                        return Err(refusal);
+                    }
+                }
                 let cookies = req
                     .headers()
                     .get("cookie")
@@ -2657,6 +2689,7 @@ struct ServerParams {
     max_outbound_queue_bytes: usize,
     max_subscriptions_per_connection: usize,
     max_pending_handshakes: usize,
+    allowed_origins: Vec<String>,
     rate_limit_capacity: f64,
     rate_limit_refill: f64,
 }
@@ -2827,6 +2860,7 @@ impl RustWSEServer {
                 max_outbound_queue_bytes: srv.max_outbound_queue_bytes,
                 max_subscriptions_per_connection: srv.max_subscriptions_per_connection,
                 max_pending_handshakes: srv.max_pending_handshakes,
+                allowed_origins: srv.allowed_origins,
             })),
             cmd_tx: None,
             thread_handle: None,
@@ -2972,10 +3006,10 @@ impl RustWSEServer {
     /// compression, encryption, ping/pong). Python handles application logic
     /// via drain mode or callbacks.
     #[new]
-    #[pyo3(signature = (host, port, max_connections = 1000, jwt_secret = None, jwt_issuer = None, jwt_audience = None, jwt_cookie_name = None, jwt_previous_secret = None, jwt_key_id = None, jwt_algorithm = None, jwt_private_key = None, max_inbound_queue_size = 131072, recovery_enabled = false, recovery_buffer_size = 128, recovery_ttl = 300, recovery_max_messages = 500, recovery_memory_budget = 268435456, presence_enabled = false, presence_max_data_size = 4096, presence_max_members = 0, rate_limit_capacity = 100_000.0, rate_limit_refill = 10_000.0, max_message_size = 1_048_576, ping_interval = 25, idle_timeout = 60, max_outbound_queue_bytes = 16_777_216, max_subscriptions_per_connection = 0, max_pending_handshakes = 512))]
+    #[pyo3(signature = (host, port, max_connections = 1000, jwt_secret = None, jwt_issuer = None, jwt_audience = None, jwt_cookie_name = None, jwt_previous_secret = None, jwt_key_id = None, jwt_algorithm = None, jwt_private_key = None, max_inbound_queue_size = 131072, recovery_enabled = false, recovery_buffer_size = 128, recovery_ttl = 300, recovery_max_messages = 500, recovery_memory_budget = 268435456, presence_enabled = false, presence_max_data_size = 4096, presence_max_members = 0, rate_limit_capacity = 100_000.0, rate_limit_refill = 10_000.0, max_message_size = 1_048_576, ping_interval = 25, idle_timeout = 60, max_outbound_queue_bytes = 16_777_216, max_subscriptions_per_connection = 0, max_pending_handshakes = 512, allowed_origins = None))]
     #[expect(
         clippy::too_many_arguments,
-        reason = "PyO3 __init__: 28 Python kwargs with defaults"
+        reason = "PyO3 __init__: 29 Python kwargs with defaults"
     )]
     fn new(
         host: String,
@@ -3006,6 +3040,7 @@ impl RustWSEServer {
         max_outbound_queue_bytes: usize,
         max_subscriptions_per_connection: usize,
         max_pending_handshakes: usize,
+        allowed_origins: Option<Vec<String>>,
     ) -> PyResult<Self> {
         Self::build(
             host,
@@ -3019,6 +3054,7 @@ impl RustWSEServer {
                 max_outbound_queue_bytes,
                 max_subscriptions_per_connection,
                 max_pending_handshakes,
+                allowed_origins: allowed_origins.unwrap_or_default(),
                 rate_limit_capacity,
                 rate_limit_refill,
             },
