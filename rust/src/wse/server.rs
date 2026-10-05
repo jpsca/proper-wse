@@ -3519,7 +3519,7 @@ impl RustWSEServer {
                                             // Answer instead of closing the socket: the client sees a
                                             // refusal it can retry later, not a broken handshake.
                                             tokio::spawn(async move {
-                                                use tokio::io::AsyncWriteExt;
+                                                use tokio::io::{AsyncReadExt, AsyncWriteExt};
                                                 let mut stream = stream;
                                                 let _ = tokio::time::timeout(
                                                     Duration::from_secs(1),
@@ -3529,6 +3529,15 @@ impl RustWSEServer {
                                                 )
                                                 .await;
                                                 let _ = stream.shutdown().await;
+                                                // Read what the client sent (its upgrade request) until it
+                                                // closes, for a second at most. A socket closed with unread
+                                                // data sends a reset, and on Windows the reset discards the
+                                                // 503 before the client reads it.
+                                                let _ = tokio::time::timeout(Duration::from_secs(1), async {
+                                                    let mut buf = [0u8; 1024];
+                                                    while matches!(stream.read(&mut buf).await, Ok(n) if n > 0) {}
+                                                })
+                                                .await;
                                             });
                                             continue;
                                         }
