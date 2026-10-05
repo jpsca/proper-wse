@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'v*'
+  # Builds and tests without publishing: publishing needs a tag.
+  workflow_dispatch:
 
 permissions: {}
 
@@ -60,6 +62,22 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: ${{ matrix.os != 'windows' }}
 
+      # abi3 wheels don't load on free-threaded Python: build one for it too.
+      - name: Set up free-threaded Python
+        id: ft
+        if: matrix.os != 'linux'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.14t'
+
+      - name: Build free-threaded wheel
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+          args: --release --out dist -i ${{ steps.ft.outputs.python-path || 'python3.14t' }}
+          sccache: ${{ matrix.os != 'windows' }}
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.target }}
@@ -108,6 +126,9 @@ jobs:
           - os: ubuntu-latest
             python: '3.14'
             target: linux-x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            python: '3.14t'
+            target: linux-x86_64-unknown-linux-gnu
           - os: macos-14
             python: '3.12'
             target: macos-aarch64-apple-darwin
@@ -130,7 +151,7 @@ jobs:
       - name: Install wheel + test deps
         shell: bash
         run: |
-          pip install dist/*.whl
+          pip install --no-index --find-links dist/ proper-wse
           pip install pytest pytest-asyncio httpx websockets
 
       - name: Run tests
@@ -145,10 +166,11 @@ jobs:
   publish:
     name: Publish to PyPI
     needs: [build, sdist, test]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment:
       name: release
-      url: https://pypi.org/project/wse-server/
+      url: https://pypi.org/project/proper-wse/
     permissions:
       id-token: write
       contents: write
@@ -173,89 +195,3 @@ jobs:
         with:
           generate_release_notes: true
           files: dist/*
-
-  # ---------------------------------------------------------------------------
-  # Build + test + publish wse-client (Python) to PyPI
-  # ---------------------------------------------------------------------------
-  publish-python-client:
-    name: Publish Python Client to PyPI
-    needs: [publish]
-    runs-on: ubuntu-latest
-    environment:
-      name: release
-      url: https://pypi.org/project/wse-client/
-    permissions:
-      id-token: write
-      contents: read
-
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
-        with:
-          python-version: '3.12'
-          cache: 'pip'
-
-      - name: Install build tools + test deps
-        run: pip install build pytest pytest-asyncio
-
-      - name: Install package + optional deps
-        run: pip install -e "python-client[all]"
-
-      - name: Run tests
-        run: pytest python-client/tests/ -v --tb=short
-
-      - name: Build sdist + wheel
-        run: python -m build python-client/ --outdir python-client-dist/
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247  # v1.14.1
-        with:
-          packages-dir: python-client-dist/
-          skip-existing: true
-
-  # ---------------------------------------------------------------------------
-  # Publish wse-client to npm
-  # ---------------------------------------------------------------------------
-  publish-npm:
-    name: Publish to npm
-    needs: [publish]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Sync version from tag
-        run: |
-          TAG="${GITHUB_REF#refs/tags/v}"
-          npm version "$TAG" --no-git-tag-version --allow-same-version
-
-      - name: Check if version exists on npm
-        id: npm-check
-        run: |
-          TAG="${GITHUB_REF#refs/tags/v}"
-          if npm view wse-client@"$TAG" version 2>/dev/null; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Publish to npm
-        if: steps.npm-check.outputs.exists == 'false'
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

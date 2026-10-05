@@ -1,8 +1,21 @@
-# WSE - WebSocket Engine
+# proper-wse: a fork of WSE (WebSocket Engine)
 
-[![PyPI - Server](https://img.shields.io/pypi/v/wse-server)](https://pypi.org/project/wse-server/)
-[![PyPI - Client](https://img.shields.io/pypi/v/wse-client)](https://pypi.org/project/wse-client/)
-[![npm](https://img.shields.io/npm/v/wse-client)](https://www.npmjs.com/package/wse-client)
+> This is a fork of [wse-server](https://github.com/silvermpx/wse), published on PyPI as
+> [`proper-wse`](https://pypi.org/project/proper-wse/) and maintained for the
+> [Proper](https://github.com/jpsca/proper) web framework. It still imports as `wse_server`,
+> so don't install it next to `wse-server`. Only the server is published; the clients in
+> this repository are upstream's.
+>
+> Changes from wse-server 2.4.3:
+> - Broadcast frames over 1 KiB are shared by every connection instead of copied into each
+>   one ([silvermpx/wse#74](https://github.com/silvermpx/wse/pull/74)).
+> - `max_pending_handshakes`; past it, a `503` counted in `wse_handshakes_dropped_total`
+>   ([silvermpx/wse#73](https://github.com/silvermpx/wse/pull/73)). Logs go to stderr.
+> - `allowed_origins`: handshakes from other sites' pages get a `403`.
+> - `topic_backlog(topic)`: how far behind delivery is on a topic.
+> - Wheels for free-threaded Python (cp314t) besides abi3.
+
+[![PyPI](https://img.shields.io/pypi/v/proper-wse)](https://pypi.org/project/proper-wse/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 High-performance WebSocket server built in Rust with native clustering, E2E encryption, message recovery, presence tracking, and real-time fan-out. Exposed to Python via PyO3 with zero GIL overhead on the data path. Ships with Rust-accelerated utilities for application code: priority queues, rate limiters, event sequencing, compression, cryptography, and JWT.

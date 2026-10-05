@@ -3,15 +3,18 @@ requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "wse-server"
-version = "2.4.1"
-description = "Rust-powered WebSocket engine for Python. Up to 5M fan-out del/s. Zero-GIL JWT."
+name = "proper-wse"
+version = "2.5.0"
+description = "Fork of wse-server, the Rust-powered WebSocket engine for Python, maintained for Proper. Imports as wse_server."
 readme = "README.md"
 license = { text = "MIT" }
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
 authors = [
     { name = "silvermpx" },
+]
+maintainers = [
+    { name = "Juan-Pablo Scaletti", email = "juanpablo@jpscaletti.com" },
 ]
 keywords = [
     "websocket",
@@ -30,6 +33,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Free Threading :: 3 - Stable",
     "Programming Language :: Rust",
     "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
     "Topic :: System :: Networking",
@@ -58,11 +62,12 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/silvermpx/wse"
-Documentation = "https://github.com/silvermpx/wse/tree/main/docs"
-Repository = "https://github.com/silvermpx/wse"
-Issues = "https://github.com/silvermpx/wse/issues"
-Changelog = "https://github.com/silvermpx/wse/releases"
+Homepage = "https://github.com/jpsca/proper-wse"
+Documentation = "https://github.com/jpsca/proper-wse/tree/main/docs"
+Repository = "https://github.com/jpsca/proper-wse"
+Upstream = "https://github.com/silvermpx/wse"
+Issues = "https://github.com/jpsca/proper-wse/issues"
+Changelog = "https://github.com/jpsca/proper-wse/releases"
 
 [tool.maturin]
 features = ["pyo3/extension-module", "pyo3/abi3-py312"]
