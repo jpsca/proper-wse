@@ -122,7 +122,7 @@ impl BroadcastQueue {
 
 /// Take `n` bytes off a connection's pending count.
 fn release_pending(pending: &AtomicUsize, n: usize) {
-    let _ = pending.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
+    let _ = pending.try_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
         Some(cur.saturating_sub(n))
     });
 }
@@ -1548,7 +1548,7 @@ async fn handle_connection(
                         }
                     }
 
-                    let _ = pending_write.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
+                    let _ = pending_write.try_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
                         Some(cur.saturating_sub(drained_bytes))
                     });
                     if ok {
