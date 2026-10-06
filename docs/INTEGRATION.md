@@ -412,6 +412,25 @@ server.update_presence(conn_id, {"status": "away"})
 
 This broadcasts a `presence_update` event to every topic where the connection has presence.
 
+### Presence Without JWT
+
+Presence tracks a connection under the `sub` of its JWT. For a connection the application authenticates itself (no `jwt_secret`), give it its identity before subscribing with presence data:
+
+```python
+server.set_connection_user(conn_id, "alice")
+server.subscribe_connection(conn_id, ["chat-room"], {"status": "online"})
+```
+
+### Leaving a Topic's Presence
+
+`untrack_presence(conn_id, topics)` removes the connection from the presence of those topics while keeping its subscriptions; the user's last connection leaving sends `presence_leave` to the topic's subscribers. (`unsubscribe_connection` does both.)
+
+```python
+server.untrack_presence(conn_id, ["chat-room"])
+```
+
+The `presence_join`, `presence_leave` and `presence_update` frames carry the `topic` in `p`, next to `user_id` and `data`.
+
 ### Presence Events
 
 The following events appear in `drain_inbound()`:

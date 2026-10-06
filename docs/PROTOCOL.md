@@ -277,7 +277,7 @@ When presence tracking is enabled, the server broadcasts presence events to all 
 Sent when the first connection for a user subscribes to a topic with presence data:
 
 ```json
-{"c":"WSE","t":"presence_join","p":{"user_id":"alice","data":{"status":"online","name":"Alice"}},"v":1}
+{"c":"WSE","t":"presence_join","p":{"topic":"chat-room","user_id":"alice","data":{"status":"online","name":"Alice"}},"v":1}
 ```
 
 ### Presence Leave (server to client)
@@ -285,7 +285,7 @@ Sent when the first connection for a user subscribes to a topic with presence da
 Sent when the last connection for a user is removed from a topic:
 
 ```json
-{"c":"WSE","t":"presence_leave","p":{"user_id":"alice","data":{"status":"online","name":"Alice"}},"v":1}
+{"c":"WSE","t":"presence_leave","p":{"topic":"chat-room","user_id":"alice","data":{"status":"online","name":"Alice"}},"v":1}
 ```
 
 ### Presence Update (server to client)
@@ -293,7 +293,7 @@ Sent when the last connection for a user is removed from a topic:
 Sent when a user's presence data is updated via `update_presence()`:
 
 ```json
-{"c":"WSE","t":"presence_update","p":{"user_id":"alice","data":{"status":"away"}},"v":1}
+{"c":"WSE","t":"presence_update","p":{"topic":"chat-room","user_id":"alice","data":{"status":"away"}},"v":1}
 ```
 
 Presence is queried through the Python API (`server.presence(topic)`, `server.presence_stats(topic)`), not through WebSocket messages.

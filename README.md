@@ -22,6 +22,9 @@
 > - `handshake_details`: the `connect` event carries a dict with the cookies, the
 >   `Authorization` header, the path with its query string, the peer address and
 >   `X-Forwarded-For`, instead of the cookies alone.
+> - `set_connection_user(conn_id, user_id)` and `untrack_presence(conn_id, topics)`, for
+>   presence on connections the application authenticates; the presence frames name their
+>   `topic`.
 
 [![PyPI](https://img.shields.io/pypi/v/proper-wse)](https://pypi.org/project/proper-wse/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -315,9 +318,16 @@ stats = server.presence_stats("chat-room")
 
 # Update a user's presence data across all their subscribed topics
 server.update_presence(conn_id, {"status": "away"})
+
+# Without JWT: give the connection its identity first, then subscribe with presence data
+server.set_connection_user(conn_id, "alice")
+server.subscribe_connection(conn_id, ["chat-room"], {"status": "online"})
+
+# Leave the presence of some topics, keeping the subscriptions
+server.untrack_presence(conn_id, ["chat-room"])
 ```
 
-Presence is tracked at the user level (JWT `sub` claim). Multiple connections from the same user share a single presence entry. `presence_join` fires on first connection, `presence_leave` on last disconnect. In cluster mode, presence state is synchronized across all nodes using CRDT last-write-wins resolution.
+Presence is tracked at the user level (JWT `sub` claim, or `set_connection_user`). Multiple connections from the same user share a single presence entry. `presence_join` fires on first connection, `presence_leave` on last disconnect. In cluster mode, presence state is synchronized across all nodes using CRDT last-write-wins resolution.
 
 ### Message Recovery
 

@@ -874,6 +874,56 @@ class TestServerLifecycle:
 
 class TestPresence:
     @pytest.mark.asyncio
+    async def test_presence_for_connections_the_application_identifies(self, server_port):
+        """Without JWT, `set_connection_user` gives a connection its identity;
+        the presence frames name the topic; `untrack_presence` leaves a topic
+        without unsubscribing."""
+        srv = RustWSEServer("127.0.0.1", server_port, max_connections=10, presence_enabled=True)
+        srv.enable_drain_mode()
+        srv.start()
+        time.sleep(0.05)
+        try:
+            alice = await websockets.connect(ws_url(server_port))
+            alice_id = drain_until(srv, "connect")[1]
+            watcher = await websockets.connect(ws_url(server_port))
+            watcher_id = drain_until(srv, "connect")[1]
+            srv.subscribe_connection(watcher_id, ["room"])
+
+            srv.set_connection_user(alice_id, "alice")
+            srv.subscribe_connection(alice_id, ["room", "lobby"], {"name": "Alice"})
+            ev = drain_until(srv, "presence_join", timeout=1.0)
+            assert ev[2] == {"topic": "room", "user_id": "alice", "data": {"name": "Alice"}} or ev[2]["topic"] == "lobby"
+            frame = json.loads(await asyncio.wait_for(watcher.recv(), 2.0))
+            assert frame["t"] == "presence_join"
+            assert frame["p"] == {"topic": "room", "user_id": "alice", "data": {"name": "Alice"}}
+            assert srv.presence("room") == {"alice": {"data": {"name": "Alice"}, "connections": 1}}
+
+            srv.untrack_presence(alice_id, ["room"])
+            frame = json.loads(await asyncio.wait_for(watcher.recv(), 2.0))
+            assert frame["t"] == "presence_leave"
+            assert frame["p"]["topic"] == "room" and frame["p"]["user_id"] == "alice"
+            assert srv.presence("room") == {}
+            assert srv.presence("lobby") != {}  # still there
+            # Still subscribed: a broadcast reaches it (after its own presence frames)
+            srv.broadcast_local("room", '{"t": "x", "p": {}}')
+            while True:
+                frame = json.loads(await asyncio.wait_for(alice.recv(), 2.0))
+                if not frame["t"].startswith("presence_"):
+                    break
+            assert frame["t"] == "x"
+
+            await alice.close()
+            await watcher.close()
+        finally:
+            srv.stop()
+
+    def test_presence_methods_need_presence(self, server):
+        with pytest.raises(RuntimeError, match="Presence is not enabled"):
+            server.set_connection_user("x", "alice")
+        with pytest.raises(RuntimeError, match="Presence is not enabled"):
+            server.untrack_presence("x", ["room"])
+
+    @pytest.mark.asyncio
     async def test_presence_join_on_subscribe(self, server_with_presence, server_port):
         """Subscribing with presence_data emits presence_join event."""
         token = make_token("alice")

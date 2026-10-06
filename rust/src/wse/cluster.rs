@@ -2476,7 +2476,7 @@ pub(crate) async fn cluster_manager(
                                     // Remote join: merge into local presence
                                     pm.merge_remote_join(&topic, &user_id, &data_val, updated_at, &origin);
                                     if let Some(ref tx) = server_cmd_tx {
-                                        let msg = super::server::format_presence_msg("presence_join", &user_id, &data_val);
+                                        let msg = super::server::format_presence_msg("presence_join", &topic, &user_id, &data_val);
                                         let _ = tx.send(super::server::ServerCommand::BroadcastLocal {
                                             topic,
                                             data: msg,
@@ -2488,7 +2488,7 @@ pub(crate) async fn cluster_manager(
                                     // Remote leave
                                     pm.merge_remote_leave(&topic, &user_id, updated_at, &origin);
                                     if let Some(ref tx) = server_cmd_tx {
-                                        let msg = super::server::format_presence_msg("presence_leave", &user_id, &data_val);
+                                        let msg = super::server::format_presence_msg("presence_leave", &topic, &user_id, &data_val);
                                         let _ = tx.send(super::server::ServerCommand::BroadcastLocal {
                                             topic,
                                             data: msg,
@@ -2500,7 +2500,7 @@ pub(crate) async fn cluster_manager(
                                     // Remote data update
                                     pm.merge_remote_update(&topic, &user_id, &data_val, updated_at);
                                     if let Some(ref tx) = server_cmd_tx {
-                                        let msg = super::server::format_presence_msg("presence_update", &user_id, &data_val);
+                                        let msg = super::server::format_presence_msg("presence_update", &topic, &user_id, &data_val);
                                         let _ = tx.send(super::server::ServerCommand::BroadcastLocal {
                                             topic,
                                             data: msg,

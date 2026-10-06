@@ -720,16 +720,18 @@ fn json_to_pyobj(py: Python<'_>, val: &serde_json::Value) -> Py<PyAny> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Format a presence event as a JSON message with category.
+/// Format a presence event as a JSON message with category. It names the
+/// topic: a connection subscribed to several gets the events of all of them.
 pub(crate) fn format_presence_msg(
     event_type: &str,
+    topic: &str,
     user_id: &str,
     data: &serde_json::Value,
 ) -> String {
     let payload = serde_json::json!({
         "c": "WSE",
         "t": event_type,
-        "p": { "user_id": user_id, "data": data }
+        "p": { "topic": topic, "user_id": user_id, "data": data }
     });
     payload.to_string()
 }
@@ -2039,7 +2041,7 @@ async fn handle_connection(
                 // Broadcast to topic subscribers via WebSocket
                 let tx = state.presence_broadcast_tx.read().unwrap().clone();
                 if let Some(tx) = tx {
-                    let msg = format_presence_msg("presence_leave", &user_id, &data);
+                    let msg = format_presence_msg("presence_leave", &topic, &user_id, &data);
                     let _ = tx.send(ServerCommand::BroadcastLocal {
                         topic: topic.clone(),
                         data: msg,
@@ -3341,6 +3343,7 @@ impl RustWSEServer {
                                     }
                                     let msg = format_presence_msg(
                                         "presence_leave",
+                                        &topic,
                                         &user_id,
                                         &data,
                                     );
@@ -3504,7 +3507,7 @@ impl RustWSEServer {
                                                         });
                                                     }
                                                     if let Some(ref tx) = broadcast_tx {
-                                                        let msg = format_presence_msg("presence_leave", &user_id, &data);
+                                                        let msg = format_presence_msg("presence_leave", &topic, &user_id, &data);
                                                         let _ = tx.send(ServerCommand::BroadcastLocal {
                                                             topic: topic.clone(),
                                                             data: msg,
@@ -4690,7 +4693,7 @@ impl RustWSEServer {
                     }
                     // Broadcast to topic subscribers via WebSocket
                     if let Some(ref tx) = self.cmd_tx {
-                        let msg = format_presence_msg("presence_join", &user_id, &join_data);
+                        let msg = format_presence_msg("presence_join", topic, &user_id, &join_data);
                         let _ = tx.send(ServerCommand::BroadcastLocal {
                             topic: topic.clone(),
                             data: msg,
@@ -5048,7 +5051,7 @@ impl RustWSEServer {
                     }
                     // Broadcast to topic subscribers via WebSocket
                     if let Some(ref tx) = self.cmd_tx {
-                        let msg = format_presence_msg("presence_leave", &user_id, &data);
+                        let msg = format_presence_msg("presence_leave", &topic, &user_id, &data);
                         let _ = tx.send(ServerCommand::BroadcastLocal {
                             topic: topic.clone(),
                             data: msg,
@@ -5552,6 +5555,61 @@ impl RustWSEServer {
     }
 
     /// Update presence data for a connection across all its presence topics.
+    /// Give a connection the identity presence tracks it under, as the JWT
+    /// handshake does with the token's `sub`. For connections the
+    /// application authenticates itself. Before `subscribe_connection`
+    /// with `presence_data`.
+    fn set_connection_user(&self, conn_id: &str, user_id: &str) -> PyResult<()> {
+        match self.shared.presence {
+            Some(ref pm) => {
+                pm.register_connection(conn_id, user_id);
+                Ok(())
+            }
+            None => Err(PyRuntimeError::new_err("Presence is not enabled")),
+        }
+    }
+
+    /// Stop tracking a connection's presence in `topics`, keeping its
+    /// subscriptions. The last connection of a user leaving a topic sends
+    /// `presence_leave` to the topic's subscribers.
+    fn untrack_presence(&self, conn_id: &str, topics: Vec<String>) -> PyResult<()> {
+        let Some(ref pm) = self.shared.presence else {
+            return Err(PyRuntimeError::new_err("Presence is not enabled"));
+        };
+        let drain = self.shared.drain_mode.load(Ordering::Relaxed);
+        let cluster_tx = self.shared.cluster_cmd_tx.read().unwrap().clone();
+        for (topic, result) in pm.untrack_topics(conn_id, &topics) {
+            if let super::presence::UntrackResult::LastLeave { user_id, data } = result {
+                if drain {
+                    self.shared.push_inbound(InboundEvent::PresenceLeave {
+                        topic: topic.clone(),
+                        user_id: user_id.clone(),
+                        data: data.clone(),
+                    });
+                }
+                if let Some(ref tx) = self.cmd_tx {
+                    let msg = format_presence_msg("presence_leave", &topic, &user_id, &data);
+                    let _ = tx.send(ServerCommand::BroadcastLocal {
+                        topic: topic.clone(),
+                        data: msg,
+                        skip_recovery: true,
+                    });
+                }
+                if let Some(ref ctx) = cluster_tx {
+                    let data_str = serde_json::to_string(&data).unwrap_or_default();
+                    let _ = ctx.send(ClusterCommand::PresenceUpdate {
+                        topic,
+                        user_id,
+                        action: 1, // leave
+                        data: data_str,
+                        updated_at: super::presence::epoch_ms(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     #[pyo3(signature = (conn_id, data))]
     fn update_presence(&self, conn_id: &str, data: &Bound<'_, PyDict>) -> PyResult<()> {
         if let Some(ref pm) = self.shared.presence {
@@ -5568,11 +5626,12 @@ impl RustWSEServer {
                     let now = super::presence::epoch_ms();
                     let cluster_tx = self.shared.cluster_cmd_tx.read().unwrap().clone();
                     if let Some(ref tx) = self.cmd_tx {
-                        let msg = format_presence_msg("presence_update", &user_id, &new_data);
                         for topic in &topics {
+                            let msg =
+                                format_presence_msg("presence_update", topic, &user_id, &new_data);
                             let _ = tx.send(ServerCommand::BroadcastLocal {
                                 topic: topic.clone(),
-                                data: msg.clone(),
+                                data: msg,
                                 skip_recovery: true,
                             });
                         }

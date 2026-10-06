@@ -1,12 +1,20 @@
 # Changelog
 
-## Unreleased
+## v2.7.0 (2026-10-06)
 
 ### Added
 
 - `handshake_details`: with it, the `connect` event (no JWT) carries a dict with what the
   handshake had, not only the cookies: `cookies`, `authorization`, `path` with its query
   string, `remote_addr` and `forwarded_for`. Off by default; the payload stays a string.
+- `set_connection_user(conn_id, user_id)`: the identity presence tracks a connection under,
+  for connections the application authenticates itself (without JWT, presence had none).
+- `untrack_presence(conn_id, topics)`: leave the presence of topics without unsubscribing.
+
+### Changed
+
+- The `presence_join`, `presence_leave` and `presence_update` frames name their `topic`
+  (`p.topic`), so a client subscribed to several topics can tell them apart.
 
 ## v2.6.2 (2026-10-06)
 
