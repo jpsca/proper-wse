@@ -3395,11 +3395,16 @@ impl RustWSEServer {
                                         suspected_slow.remove(cid);
                                     }
 
-                                    if let Some(last) =
-                                        ping_state.conn_last_activity.get(cid)
-                                    {
+                                    // Copied out, so the map's shard lock isn't held:
+                                    // removing the entry below while a `Ref` into the
+                                    // same shard is alive deadlocks this task.
+                                    let last_activity = ping_state
+                                        .conn_last_activity
+                                        .get(cid)
+                                        .map(|last| *last);
+                                    if let Some(last) = last_activity {
                                         // Check zombie (no activity for idle_timeout)
-                                        if now.duration_since(*last) > idle_timeout
+                                        if now.duration_since(last) > idle_timeout
                                         {
                                             pending.fetch_add(8, Ordering::Relaxed);
                                             if tx.send(WsFrame::Msg(

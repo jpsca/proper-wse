@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Closing an idle connection (no message from the client for `idle_timeout`) deadlocked
+  the ping task: no more pings to any connection, no more idle or slow-consumer checks,
+  no `disconnect` event for the closed connection, and `stop()` never returned. It held
+  a read lock on the activity map while removing the connection's entry from it.
+
 ## v2.6.1 (2026-10-06)
 
 ### Added

@@ -6,6 +6,7 @@ send/receive messages, verify drain_inbound, subscriptions, etc.
 
 import asyncio
 import json
+import threading
 import time
 
 import pytest
@@ -138,6 +139,41 @@ class TestConnectionLifecycle:
         await ws2.close()
         drain_until(server, "disconnect")
         assert server.get_connection_count() == 0
+
+
+class TestIdleConnections:
+    @pytest.mark.asyncio
+    async def test_an_idle_client_is_closed_and_the_others_keep_their_pings(self, server_port):
+        """A client that sends nothing for `idle_timeout` is closed, with its
+        disconnect event. One that answers the pings stays and keeps getting
+        them, and the server still stops."""
+        srv = RustWSEServer("127.0.0.1", server_port, ping_interval=1, idle_timeout=2)
+        srv.enable_drain_mode()
+        srv.start()
+        time.sleep(0.05)
+        try:
+            silent = await websockets.connect(ws_url(server_port), ping_interval=None)
+            silent_id = drain_until(srv, "connect")[1]
+            talker = await websockets.connect(ws_url(server_port), ping_interval=None)
+            drain_until(srv, "connect")
+
+            pings = 0
+            deadline = time.monotonic() + 6
+            while time.monotonic() < deadline:
+                msg = json.loads(await asyncio.wait_for(talker.recv(), timeout=2.0))
+                if msg.get("t") == "ping":
+                    pings += 1
+                    await talker.send('{"c":"WSE","t":"PONG","p":{}}')
+
+            assert pings >= 5
+            assert drain_until(srv, "disconnect", timeout=0.5)[1] == silent_id
+            await talker.close()
+            await silent.close()
+        finally:
+            stopper = threading.Thread(target=srv.stop, daemon=True)
+            stopper.start()
+            stopper.join(5)
+            assert not stopper.is_alive(), "stop() hung"
 
 
 # ---------------------------------------------------------------------------
