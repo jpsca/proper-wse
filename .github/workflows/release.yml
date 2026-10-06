@@ -35,6 +35,14 @@ jobs:
             target: aarch64-unknown-linux-gnu
             manylinux: 2_28
 
+          # Linux with musl (Alpine), x86_64 and aarch64
+          - os: linux
+            target: x86_64-unknown-linux-musl
+            manylinux: musllinux_1_2
+          - os: linux
+            target: aarch64-unknown-linux-musl
+            manylinux: musllinux_1_2
+
           # macOS x86_64 (Intel)
           - os: macos
             target: x86_64-apple-darwin
@@ -51,7 +59,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Setup QEMU (for cross-compilation)
-        if: matrix.os == 'linux' && matrix.target == 'aarch64-unknown-linux-gnu'
+        if: matrix.os == 'linux' && startsWith(matrix.target, 'aarch64-')
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8  # v4.2.0
 
       - name: Build wheels
@@ -62,20 +70,37 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: ${{ matrix.os != 'windows' }}
 
-      # abi3 wheels don't load on free-threaded Python: build one for it too.
-      - name: Set up free-threaded Python
-        id: ft
+      # abi3 wheels don't load on free-threaded Python: build one for each
+      # free-threaded version. On Linux the build image has the interpreters.
+      - name: Set up free-threaded Python 3.14
+        id: ft314
         if: matrix.os != 'linux'
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: '3.14t'
 
-      - name: Build free-threaded wheel
+      - name: Build free-threaded wheel (3.14t)
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux || 'auto' }}
-          args: --release --out dist -i ${{ steps.ft.outputs.python-path || 'python3.14t' }}
+          args: --release --out dist -i ${{ steps.ft314.outputs.python-path || 'python3.14t' }}
+          sccache: ${{ matrix.os != 'windows' }}
+
+      - name: Set up free-threaded Python 3.15
+        id: ft315
+        if: matrix.os != 'linux'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.15t'
+          allow-prereleases: true
+
+      - name: Build free-threaded wheel (3.15t)
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+          args: --release --out dist -i ${{ steps.ft315.outputs.python-path || 'python3.15t' }}
           sccache: ${{ matrix.os != 'windows' }}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
@@ -129,6 +154,9 @@ jobs:
           - os: ubuntu-latest
             python: '3.14t'
             target: linux-x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            python: '3.15t'
+            target: linux-x86_64-unknown-linux-gnu
           - os: macos-14
             python: '3.12'
             target: macos-aarch64-apple-darwin
@@ -142,6 +170,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: ${{ matrix.python }}
+          allow-prereleases: true
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
@@ -161,11 +190,39 @@ jobs:
           pytest tests/ -v --tb=short
 
   # ---------------------------------------------------------------------------
+  # Test the musl wheel on Alpine
+  # ---------------------------------------------------------------------------
+  test-musl:
+    name: Test Alpine (Python 3.13, musl)
+    needs: build
+    runs-on: ubuntu-latest
+    container: python:3.13-alpine
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: wheels-linux-x86_64-unknown-linux-musl
+          path: dist/
+
+      - name: Install wheel + test deps
+        run: |
+          pip install --no-index --find-links dist/ proper-wse
+          pip install pytest pytest-asyncio httpx websockets cryptography
+
+      - name: Run tests
+        run: |
+          rm -rf wse_server/
+          pytest tests/ -v --tb=short
+
+  # ---------------------------------------------------------------------------
   # Publish to PyPI (trusted publishing via OIDC)
   # ---------------------------------------------------------------------------
   publish:
     name: Publish to PyPI
-    needs: [build, sdist, test]
+    needs: [build, sdist, test, test-musl]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment:

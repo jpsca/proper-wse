@@ -18,7 +18,7 @@
 >   a Close frame queued behind their backlog can't do.
 > - The pending-bytes count of a connection drops with each write to its socket, not
 >   when a whole backlog is written.
-> - Wheels for free-threaded Python (cp314t) besides abi3.
+> - Wheels for free-threaded Python (cp314t, cp315t) besides abi3, and for musl (Alpine) Linux.
 
 [![PyPI](https://img.shields.io/pypi/v/proper-wse)](https://pypi.org/project/proper-wse/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

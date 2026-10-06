@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "proper-wse"
-version = "2.6.0"
+version = "2.6.1"
 description = "Fork of wse-server, the Rust-powered WebSocket engine for Python, maintained for Proper. Imports as wse_server."
 readme = "README.md"
 license = { text = "MIT" }
@@ -33,6 +33,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Programming Language :: Python :: Free Threading :: 3 - Stable",
     "Programming Language :: Rust",
     "Topic :: Internet :: WWW/HTTP :: HTTP Servers",

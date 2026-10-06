@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.6.1 (2026-10-06)
+
+### Added
+
+- Wheels for free-threaded Python 3.15 (cp315t), next to the cp314t and abi3 ones.
+- Wheels for musl Linux (Alpine), x86_64 and aarch64; the release tests the x86_64 one on
+  Alpine.
+
 ## v2.6.0 (2026-10-06)
 
 ### Added
