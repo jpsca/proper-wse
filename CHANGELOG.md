@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v2.6.2 (2026-10-06)
 
 ### Fixed
 
@@ -8,6 +8,7 @@
   the ping task: no more pings to any connection, no more idle or slow-consumer checks,
   no `disconnect` event for the closed connection, and `stop()` never returned. It held
   a read lock on the activity map while removing the connection's entry from it.
+- `wse_server.__version__` said `2.4.0`; it now comes from the installed package's metadata.
 
 ## v2.6.1 (2026-10-06)
 

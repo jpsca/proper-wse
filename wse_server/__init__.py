@@ -1,5 +1,7 @@
 """WSE Server -- High-performance WebSocket engine powered by Rust."""
 
+from importlib.metadata import version
+
 from wse_server._wse_accel import (
     RustCompressionManager,
     RustEventSequencer,
@@ -26,7 +28,7 @@ from wse_server._wse_accel import (
 from wse_server.core.filters import EventFilter
 from wse_server.core.types import DeliveryGuarantee, EventPriority
 
-__version__ = "2.4.0"
+__version__ = version("proper-wse")
 
 __all__ = [
     "RustWSEServer",

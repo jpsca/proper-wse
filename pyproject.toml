@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "proper-wse"
-version = "2.6.1"
+version = "2.6.2"
 description = "Fork of wse-server, the Rust-powered WebSocket engine for Python, maintained for Proper. Imports as wse_server."
 readme = "README.md"
 license = { text = "MIT" }
