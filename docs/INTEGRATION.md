@@ -7,7 +7,7 @@ Complete reference for integrating `wse-server` into your application. Covers se
 ## 1. Installation
 
 ```bash
-pip install wse-server
+pip install proper-wse
 ```
 
 The package includes the Python server module and the prebuilt Rust engine (`wse-accel`). No separate compilation step required.
@@ -645,127 +645,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for Kubernetes preStop hook and rolling resta
 
 ---
 
-## 12. Client SDKs
-
-### Python Client
-
-```bash
-pip install wse-client
-```
-
-```python
-from wse_client import AsyncWSEClient
-
-async with AsyncWSEClient("ws://localhost:5007/wse", token="...") as client:
-    await client.subscribe(["prices"])
-    async for event in client:
-        print(event)
-```
-
-### TypeScript / React Client
-
-```bash
-npm install wse-client
-```
-
-**Recommended file structure:**
-
-```
-src/wse/
-├── index.ts              # re-export: export * from 'wse-client'
-├── config.ts             # App-specific: endpoints, auth refresh, topics
-└── handlers/
-    ├── index.ts           # registerAllHandlers()
-    ├── BrokerHandlers.ts  # Domain-specific event handlers
-    └── ...
-```
-
-Everything else (services, stores, hooks, protocols, utils, types, constants) comes from the package. Use a barrel re-export so existing `@/wse` imports keep working:
-
-```typescript
-// src/wse/index.ts
-export * from 'wse-client';
-```
-
-**App-level config** (endpoints, auth, topics):
-
-```typescript
-// src/wse/config.ts
-export const APP_DEFAULT_TOPICS = [
-  'broker_events', 'account_events', 'market_data',
-] as const;
-
-export function getAppEndpoints(): string[] {
-  const url = import.meta.env?.VITE_WSE_URL;  // Vite
-  if (url) {
-    const normalized = url.replace(/\/$/, '');
-    return [normalized.endsWith('/wse') ? normalized : `${normalized}/wse`];
-  }
-  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return [`${protocol}://${window.location.host}/wse`];
-}
-
-export async function refreshAuthToken(): Promise<void> {
-  const res = await fetch('/api/auth/refresh', {
-    method: 'POST', credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-  });
-  if (!res.ok) throw new Error(`Token refresh failed: ${res.status}`);
-}
-```
-
-**Provider setup:**
-
-```tsx
-import { useWSE } from 'wse-client';
-import type { UseWSEConfig } from 'wse-client';
-import { APP_DEFAULT_TOPICS, getAppEndpoints, refreshAuthToken } from '@/wse/config';
-import { registerAllHandlers } from '@/wse/handlers';
-
-export function WSEProvider({ children }: { children: ReactNode }) {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-
-  const wseConfig: UseWSEConfig = {
-    endpoints: getAppEndpoints(),
-    refreshAuthToken,
-    registerHandlers: registerAllHandlers,
-  };
-
-  const wse = useWSE(
-    isAuthenticated ? 'cookie' : undefined,  // 'cookie' = HttpOnly cookie auth
-    [...APP_DEFAULT_TOPICS],
-    wseConfig,
-  );
-
-  return <WSEContext.Provider value={wse}>{children}</WSEContext.Provider>;
-}
-```
-
-**Key points:**
-- `useWSE(token?, initialTopics?, config?)` — 3 arguments
-- `refreshAuthToken` goes inside `UseWSEConfig`, not as a separate argument
-- Pass `'cookie'` as token for HttpOnly cookie auth (browser sends cookies on WS upgrade)
-- Pass `undefined` when not authenticated (prevents connection)
-
-**Event handlers** — register by the `"t"` value the backend publisher sets:
-
-```typescript
-// handlers/index.ts
-export function registerAllHandlers(messageProcessor: {
-  registerHandler: (type: string, handler: (msg: any) => void) => void;
-}): void {
-  messageProcessor.registerHandler('broker_health_update', BrokerHandlers.handleHealthUpdate);
-  messageProcessor.registerHandler('quote_update', MarketDataHandlers.handleQuoteUpdate);
-}
-```
-
-Frontend never maps domain event names. It receives ready `"t"` + `"p"` from the backend publisher. See Section 14 for the publishing architecture.
-
-Both clients handle reconnection with exponential backoff, automatic resubscription, and message recovery (when enabled on the server).
-
----
-
-## 13. Production Deployment
+## 12. Production Deployment
 
 ### Server Sizing
 
@@ -814,7 +694,7 @@ Key metrics to watch:
 
 ---
 
-## 14. Publishing Patterns
+## 13. Publishing Patterns
 
 How to publish real-time events from backend to frontend via WSE. Two patterns depending on your architecture.
 
@@ -987,7 +867,7 @@ system:{category}                  # Global system events
 
 ---
 
-## 15. Prometheus Metrics
+## 14. Prometheus Metrics
 
 WSE exposes production metrics in Prometheus text exposition format via the `prometheus_metrics()` method.
 

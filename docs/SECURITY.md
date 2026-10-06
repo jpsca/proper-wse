@@ -129,14 +129,7 @@ On authentication failure:
 const ws = new WebSocket('wss://host:port/wse');
 ```
 
-**Python client (backend):**
-```python
-from wse_client import connect
-
-async with connect("ws://localhost:5006/wse", token="<JWT>") as client:
-    # Sends JWT as both Cookie and Authorization header
-    await client.subscribe(["events"])
-```
+**Backend clients** send the token in an `Authorization: Bearer <JWT>` header on the upgrade request.
 
 **API client (curl/httpie):**
 ```bash
@@ -232,32 +225,11 @@ E:<IV (12 bytes)><AES-GCM ciphertext>
 - Per-connection key lifecycle: generate on handshake, derive on client key exchange, clear on disconnect
 - Recovery replay: buffered messages are stored **unframed**; each is framed — or encrypted then framed — per connection at replay time, so a plaintext frame is never replayed to an E2E-encrypted connection
 
-**Client-side encryption (`security.ts`):**
-- AES-GCM-256 with a fresh random IV per message; the recent-IV set is checked **before** each encryption (redraw on collision, and refuse to encrypt rather than reuse an IV)
-- Nonce cache for replay attack prevention (5-minute window, 10K max)
-- Automatic key rotation (configurable interval, default: 1 hour)
-- Constant-time string comparison for security checks
-- Cleanup on destroy (keys, timers, caches cleared from memory)
-
 **Enable encryption:**
 
-```typescript
-// TypeScript/React client
-const { } = useWSE({
-  security: { encryptionEnabled: true },
-});
-```
+A client turns encryption on by sending its ECDH P-256 public key in `client_hello` (see [PROTOCOL.md](PROTOCOL.md)).
 
-```python
-# Python client
-from wse_client import AsyncWSEClient
-
-# Encryption is negotiated during the handshake when crypto extras are installed
-async with AsyncWSEClient("ws://localhost:5006/wse", token="<jwt>") as client:
-    await client.subscribe(["secure-topic"])
-```
-
-The key exchange happens automatically during the `client_hello`/`server_hello` handshake. The `SecurityManager` handles ECDH key exchange, AES-GCM encryption/decryption, and key rotation. Incoming `E:`-prefixed binary frames are decrypted transparently by the message processor.
+The server derives the session key from the client's key and answers with its own in `server_hello`. From then on it encrypts what it sends to that connection, as `E:`-prefixed binary frames, and decrypts the `E:` frames it receives.
 
 ## Cluster Security
 

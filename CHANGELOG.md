@@ -1,5 +1,49 @@
 # Changelog
 
+## v2.6.0 (2026-10-06)
+
+### Added
+
+- `connection_backlogs(min_pending)`: `(conn_id, pending bytes, bytes written so far)` of
+  the connections with a backlog. Two calls apart tell a slow client from one that
+  stopped reading.
+- `abort_connection(conn_id)`: ends a connection at once. `disconnect()` queues a Close
+  frame behind the backlog, which never reaches a client that doesn't read.
+
+### Changed
+
+- A connection's pending-bytes count drops with each write to its socket, not when a
+  whole backlog is written.
+
+## v2.5.0 (2026-10-05)
+
+First release as `proper-wse` (the module is still `wse_server`), from wse-server 2.4.3.
+
+### Added
+
+- `max_pending_handshakes` (default 512). Past it, new connections get a `503` with
+  `Retry-After: 1` instead of a closed socket, counted in `wse_handshakes_dropped_total`.
+- `allowed_origins`: a browser handshake from another origin gets a `403`; the
+  handshake's own host is always allowed.
+- `topic_backlog(topic)`: subscribers of a topic, their pending bytes, and the largest.
+- Wheels for free-threaded Python (cp314t), besides abi3.
+
+### Changed
+
+- Broadcast frames over 1 KiB are shared by every connection instead of copied into
+  each one: a backlog costs memory once, not once per connection.
+- Logs go to stderr, and the default filter matches the crate (`_wse_accel=info`), so
+  warnings show.
+
+### Fixed
+
+- A connection refused with a `503` reads the client's request before closing; without
+  that, Windows clients saw a reset instead of the `503`.
+
+### Removed
+
+- The Python and TypeScript clients (`wse-client`): this fork keeps only the server.
+
 ## v2.4.3 (2026-07-31)
 
 ### Fixed (TS client)

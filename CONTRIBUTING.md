@@ -1,126 +1,73 @@
-# Contributing to WSE
+# Contributing to proper-wse
 
-Thank you for your interest in contributing to WSE. This guide covers the development setup, coding standards, and submission process.
+proper-wse is a fork of [wse-server](https://github.com/silvermpx/wse), kept for the
+[Proper](https://github.com/jpsca/proper) web framework. This repository has the server
+only: the Rust core and its Python bindings.
 
-## Development Setup
+## Development setup
 
-### Prerequisites
-
-- Python 3.12+
-- Rust 1.75+ (stable)
-- Node.js 18+ (for TS client)
-- maturin (`pip install maturin`)
-
-### Building from Source
+You need Python 3.12+ (free-threaded builds included), a stable Rust toolchain with
+`rustfmt` and `clippy`, and [maturin](https://www.maturin.rs/).
 
 ```bash
-# Clone the repository
-git clone https://github.com/niceguy135/wse.git
-cd wse
-
-# Build the Rust extension (development mode)
-maturin develop --manifest-path rust/Cargo.toml
-
-# Install Python dependencies
-pip install -e ".[dev]"
-
-# Install TypeScript dependencies
-npm install
+git clone https://github.com/jpsca/proper-wse.git
+cd proper-wse
+python -m venv .venv && source .venv/bin/activate
+pip install maturin pytest pytest-asyncio httpx websockets cryptography
+maturin develop --release
 ```
 
-### Running Tests
+## Checks
+
+The CI runs these on every push to `main` and on pull requests:
 
 ```bash
-# Rust tests
-cargo test --manifest-path rust/Cargo.toml
-
-# Python server tests
+cargo fmt --manifest-path rust/Cargo.toml -- --check
+cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+ruff check wse_server/ tests/
+ruff format --check wse_server/ tests/
 pytest tests/
-
-# Python client tests
-cd python-client && pytest tests/
-
-# TS client
-npm test
 ```
 
-## Project Structure
+`cargo test` doesn't link: the crate is a `cdylib` built with PyO3's `extension-module`.
+The tests are in `tests/`, in Python, against the built module.
+
+## Project structure
 
 ```
-wse/
-  rust/                  # Rust core (PyO3 bindings, server, cluster, presence, recovery)
-  wse_server/            # Python server package (thin wrapper over Rust)
-  python-client/         # Python client SDK (wse-client on PyPI)
-  client/                # TypeScript/React client SDK (wse-client on npm)
-  examples/              # Working example scripts
-  tests/                 # Integration tests
-  benchmarks/            # Performance benchmarks (Rust, Python, TypeScript)
-  docs/                  # Documentation
+rust/          # the server: tokio, tungstenite, PyO3 bindings
+wse_server/    # the Python package (imports as wse_server) and its type stubs
+tests/         # integration tests: the built module against real WebSocket clients
+benchmarks/    # benchmark servers in Python and rust-bench, a load generator in Rust
+docs/          # architecture, protocol, deployment, security
+examples/      # small servers
 ```
 
-## Code Standards
+## Code standards
 
-### Rust
+- Rust: `cargo fmt`, and `cargo clippy -- -D warnings` with `--all-targets`.
+- Python: `ruff format` and `ruff check`; type annotations and docstrings on public API.
+  A new method of `RustWSEServer` goes in `wse_server/_wse_accel.pyi` too.
+- A change in behavior comes with a test in `tests/`.
 
-- Format with `cargo fmt` before every commit.
-- Pass `cargo clippy -- -D warnings` with zero warnings.
-- Use `DashMap` for concurrent state, `crossbeam` for channels.
-- Prefer `Arc<Bytes>` for shared message payloads (zero-copy broadcast).
+## Commit messages
 
-### Python
+Imperative, with a type prefix: `fix(server): ...`, `feat(server): ...`, `perf(server): ...`,
+`build: ...`. A body says what changed and why, in short lines or bullets.
 
-- Format with `ruff format`.
-- Lint with `ruff check`.
-- Type annotations on all public API methods.
-- Docstrings on all public classes and methods (Google style).
+## Releases
 
-### TypeScript
+1. Bump the version in `pyproject.toml` and `rust/Cargo.toml`, and add it to
+   `CHANGELOG.md`.
+2. Tag the commit `vX.Y.Z` and push the tag.
+3. The `Release` workflow builds the wheels (abi3, and cp314t for free-threaded Python),
+   tests them, publishes them to PyPI and creates the GitHub release. It can also be run
+   by hand on `main` (`workflow_dispatch`) to build and test without publishing.
 
-- Format with Prettier.
-- Lint with ESLint.
-- Strict TypeScript mode (`strict: true`).
+## Changes for upstream
 
-## Commit Messages
-
-Write commit messages in imperative form. Describe what the change does, not what you did.
-
-```
-Add per-topic presence stats endpoint
-
-- PresenceManager exposes O(1) member/connection counts
-- New presence_stats() method on RustWSEServer
-- Avoids full member iteration for dashboard use cases
-```
-
-For version bumps, include the version in the title:
-
-```
-v2.0.1 - Fix cluster frame size mismatch
-
-Tighten sender payload limit to account for 8-byte header.
-Receiver now correctly validates total wire frame size.
-```
-
-## Pull Requests
-
-1. Create a feature branch from `main`.
-2. Make your changes with clear, focused commits.
-3. Ensure all tests pass locally.
-4. Run `cargo fmt` and `cargo clippy` for Rust changes.
-5. Run `ruff format` and `ruff check` for Python changes.
-6. Open a PR against `main` with a clear description.
-
-## Reporting Issues
-
-Open an issue on GitHub with:
-
-- WSE version (`pip show wse-server`)
-- Python version
-- OS and architecture
-- Steps to reproduce
-- Expected vs actual behavior
-- Relevant log output
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the MIT License.
+If wse-server's upstream becomes active again, a change can go back to it as a pull
+request. Such a change lives on its own branch, based on upstream's `main`, not on ours,
+so it doesn't carry the fork's other changes: `fix/pending-handshake-503`
+(silvermpx/wse#73) and `perf/shared-broadcast-frames` (silvermpx/wse#74) are such
+branches. Merge it into our `main` as well.

@@ -3,8 +3,8 @@
 > This is a fork of [wse-server](https://github.com/silvermpx/wse), published on PyPI as
 > [`proper-wse`](https://pypi.org/project/proper-wse/) and maintained for the
 > [Proper](https://github.com/jpsca/proper) web framework. It still imports as `wse_server`,
-> so don't install it next to `wse-server`. Only the server is published; the clients in
-> this repository are upstream's.
+> so don't install it next to `wse-server`. Upstream also has Python and TypeScript
+> clients; this fork keeps only the server.
 >
 > Changes from wse-server 2.4.3:
 > - Broadcast frames over 1 KiB are shared by every connection instead of copied into each
@@ -101,32 +101,16 @@ High-performance WebSocket server built in Rust with native clustering, E2E encr
 | **Recovery on reconnect** | `subscribe_with_recovery()` replays missed messages automatically |
 | **Per-message stamp** | When recovery is enabled, every topic broadcast carries `tp`/`e`/`o` (topic, epoch, offset) so clients dedup idempotently and detect gaps from the messages themselves |
 
-### Client SDKs (Python + TypeScript/React)
-
-| Feature | Details |
-|---------|---------|
-| **Auto-reconnection** | 4 strategies: exponential, linear, fibonacci, adaptive backoff with jitter |
-| **Connection pool** | Multi-endpoint with health scoring, 3 load balancing strategies, automatic failover |
-| **Circuit breaker** | CLOSED/OPEN/HALF_OPEN state machine, prevents connection storms |
-| **Rate limiting** | Client-side token bucket, coordinates with server feedback |
-| **E2E encryption** | Wire-compatible AES-GCM-256 + ECDH P-256 (both clients speak the same protocol) |
-| **Event sequencing** | Duplicate detection (sliding window) + per-topic `(epoch, offset)` idempotent dedup with automatic gap recovery |
-| **Network monitor** | Real-time latency, jitter, and connection-quality scoring (Python client also estimates packet loss) |
-| **Priority queues** | 5 levels from CRITICAL to BACKGROUND |
-| **Offline queue** | IndexedDB persistence (TypeScript), replayed on reconnect |
-| **Compression** | Automatic zlib for messages above threshold |
-| **MessagePack** | Binary encoding for smaller payloads and faster serialization |
-| **Message signing** | HMAC-SHA256 integrity verification |
-
 ### Transport Security
 
 | Feature | Details |
 |---------|---------|
-| **Origin validation** | Configure in reverse proxy (nginx/Caddy) to prevent CSWSH |
+| **Origin validation** | `allowed_origins`: a browser handshake from another origin gets `403` (the handshake's own host is always allowed), against cross-site WebSocket hijacking |
 | **Cookie auth** | `access_token` HTTP-only cookie with `Secure + SameSite=Lax` (OWASP recommended for browsers) |
 | **Frame protection** | 1 MB max frame size, serde_json parsing (no eval), escaped user IDs in server_ready; inbound msgpack rejected beyond 64 nesting levels |
 | **Cluster frame protection** | zstd decompression output capped at 1 MB (MAX_FRAME_SIZE), protocol version validation |
-| **Slowloris protection** | At most 512 concurrent pre-handshake connections; sockets that never complete the WS upgrade are bounded and dropped |
+| **Slowloris protection** | At most `max_pending_handshakes` (512) connections in the handshake at once; past it, a `503` with `Retry-After`, counted in `wse_handshakes_dropped_total` |
+| **Stalled clients** | `connection_backlogs()` finds the connections whose client stopped reading; `abort_connection()` ends them without the close handshake |
 | **Bounded callback dispatch** | Callback mode caps in-flight `on_message` callbacks at 256 per connection; excess inbound work is shed and counted as rate-limited |
 | **Fail-closed recovery ACL** | Recovery replay applies the connection's topic ACL — unauthorized topics are never replayed or position-probed |
 
@@ -135,7 +119,7 @@ High-performance WebSocket server built in Rust with native clustering, E2E encr
 ## Quick Start
 
 ```bash
-pip install wse-server
+pip install proper-wse
 ```
 
 ```python
@@ -491,73 +475,6 @@ Two compression layers:
 
 ---
 
-## Client SDKs
-
-### Python
-
-```bash
-pip install wse-client
-```
-
-Full-featured async and sync client with connection pool, circuit breaker, auto-reconnect, E2E encryption, and msgpack binary transport.
-
-```python
-from wse_client import connect
-
-async with connect("ws://localhost:5007/wse", token="<jwt>") as client:
-    await client.subscribe(["updates"])
-    async for event in client:
-        print(event.type, event.payload)
-```
-
-**Sync interface:**
-
-```python
-from wse_client import SyncWSEClient
-
-client = SyncWSEClient("ws://localhost:5007/wse", token="<jwt>")
-client.connect()
-client.subscribe(["updates"])
-
-@client.on("updates")
-def handle(event):
-    print(event.payload)
-
-client.run_forever()
-```
-
-Key features: 4 reconnect strategies (exponential, linear, fibonacci, adaptive), connection pool with health scoring and 3 load balancing strategies, circuit breaker, token bucket rate limiter, event sequencer with id dedup plus per-topic `(epoch, offset)` idempotent dedup and gap recovery, network quality monitoring (latency/jitter/packet loss).
-
-See [python-client/](python-client/) for full source and examples.
-
-### TypeScript / React
-
-```bash
-npm install wse-client
-```
-
-Single React hook (`useWSE`) for connection lifecycle, subscriptions, and message dispatch.
-
-```tsx
-import { useWSE } from 'wse-client';
-
-function App() {
-  const { sendMessage, connectionHealth } = useWSE(
-    '<jwt-token>',
-    ['updates'],
-    { endpoints: ['ws://localhost:5007/wse'] },
-  );
-
-  return <div>Status: {connectionHealth}</div>;
-}
-```
-
-Key features: offline queue with IndexedDB persistence, adaptive quality management, connection pool with health scoring, E2E encryption (Web Crypto API), message batching, 5 priority levels, Zustand store for external state access.
-
-See [ts-client/](ts-client/) for full source and examples.
-
----
-
 ## Performance
 
 Benchmarked on AMD EPYC 7502P (32 cores / 64 threads, 128 GB RAM), Ubuntu 24.04.
@@ -571,7 +488,7 @@ Benchmarked on AMD EPYC 7502P (32 cores / 64 threads, 128 GB RAM), Ubuntu 24.04.
 
 Sub-millisecond latency. Median 0.38ms with JWT authentication. Connection handshake: 0.53ms median (Rust JWT path).
 
-Detailed results: [Benchmarks](docs/BENCHMARKS.md) | [Fan-out](docs/BENCHMARKS_FANOUT.md) | [Rust Client](docs/BENCHMARKS_RUST_CLIENT.md) | [Python Client](docs/BENCHMARKS_PYTHON_CLIENT.md) | [TS Client](docs/BENCHMARKS_TS_CLIENT.md)
+Detailed results: [Benchmarks](docs/BENCHMARKS.md) | [Fan-out](docs/BENCHMARKS_FANOUT.md) | [Rust load generator](docs/BENCHMARKS_RUST_CLIENT.md) | [Python load scripts](docs/BENCHMARKS_PYTHON_CLIENT.md)
 
 ---
 
