@@ -46,6 +46,12 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 arc-swap = "1"
 
+# On musl, mimalloc's default initial-exec TLS fails in a library loaded with
+# dlopen, as a Python extension is ("initial-exec TLS resolves to dynamic
+# definition"); local-dynamic TLS works.
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = { version = "0.1", features = ["local_dynamic_tls"] }
+
 [dev-dependencies]
 rcgen = "0.14"
 
