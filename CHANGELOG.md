@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `handshake_details`: with it, the `connect` event (no JWT) carries a dict with what the
+  handshake had, not only the cookies: `cookies`, `authorization`, `path` with its query
+  string, `remote_addr` and `forwarded_for`. Off by default; the payload stays a string.
+
 ## v2.6.2 (2026-10-06)
 
 ### Fixed

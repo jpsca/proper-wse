@@ -106,6 +106,40 @@ class TestConnectionLifecycle:
             assert isinstance(ev[2], str)  # cookies string
 
     @pytest.mark.asyncio
+    async def test_connect_with_handshake_details(self, server_port):
+        """With `handshake_details`, the payload is a dict with what the
+        handshake had: cookies, Authorization, the path with its query,
+        the peer address and X-Forwarded-For."""
+        srv = RustWSEServer("127.0.0.1", server_port, max_connections=10, handshake_details=True)
+        srv.enable_drain_mode()
+        srv.start()
+        time.sleep(0.05)
+        try:
+            headers = {
+                "Authorization": "Bearer abc",
+                "Cookie": "a=1; b=2",
+                "X-Forwarded-For": "203.0.113.9",
+            }
+            async with await websockets.connect(
+                ws_url(server_port) + "?room=1&x=y", additional_headers=headers
+            ):
+                ev = drain_until(srv, "connect")
+                assert ev[2]["cookies"] == "a=1; b=2"
+                assert ev[2]["authorization"] == "Bearer abc"
+                assert ev[2]["path"] == "/wse?room=1&x=y"
+                assert ev[2]["remote_addr"].startswith("127.0.0.1:")
+                assert ev[2]["forwarded_for"] == "203.0.113.9"
+            # Without any of them
+            async with await websockets.connect(ws_url(server_port)):
+                ev = drain_until(srv, "connect")
+                assert ev[2] == {
+                    "cookies": "", "authorization": None, "path": "/wse",
+                    "remote_addr": ev[2]["remote_addr"], "forwarded_for": None,
+                }
+        finally:
+            srv.stop()
+
+    @pytest.mark.asyncio
     async def test_disconnect_event(self, server, server_port):
         """Closing connection emits disconnect event."""
         token = make_token("bob")

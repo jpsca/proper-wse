@@ -284,10 +284,20 @@ fn clone_tcp_stream(stream: TcpStream) -> std::io::Result<(TcpStream, TcpStream)
 
 /// Inbound event types pushed to drain queue.
 /// All events go through one FIFO queue to preserve ordering.
+/// What a handshake had besides the cookies (`handshake_details`).
+struct ConnectDetails {
+    authorization: Option<String>,
+    /// The request path, with its query string.
+    path: String,
+    remote_addr: String,
+    forwarded_for: Option<String>,
+}
+
 enum InboundEvent {
     Connect {
         conn_id: String,
         cookies: String,
+        details: Option<ConnectDetails>,
     },
     /// Rust validated JWT from cookie — user_id already resolved.
     /// Python can skip JWT decode and go straight to connection setup.
@@ -403,6 +413,7 @@ pub(crate) struct SharedStateConfig {
     pub max_subscriptions_per_connection: usize,
     pub max_pending_handshakes: usize,
     pub allowed_origins: Vec<String>,
+    pub handshake_details: bool,
 }
 
 pub(crate) struct SharedState {
@@ -425,6 +436,11 @@ pub(crate) struct SharedState {
     /// a 403, which stops other sites' pages from connecting with the user's
     /// cookies (cross-site WebSocket hijacking).
     allowed_origins: Arc<Vec<String>>,
+    /// Whether the `connect` event (drain mode, no JWT) carries a dict with
+    /// what the handshake had besides the cookies: the `Authorization`
+    /// header, the path with its query string, the peer address and
+    /// `X-Forwarded-For`. Off, it carries the cookies as a string.
+    handshake_details: bool,
     on_connect: std::sync::RwLock<Option<Py<PyAny>>>,
     on_message: std::sync::RwLock<Option<Py<PyAny>>>,
     on_disconnect: std::sync::RwLock<Option<Py<PyAny>>>,
@@ -515,6 +531,7 @@ impl SharedState {
                     .map(|o| o.trim_end_matches('/').to_ascii_lowercase())
                     .collect(),
             ),
+            handshake_details: cfg.handshake_details,
             on_connect: std::sync::RwLock::new(None),
             on_message: std::sync::RwLock::new(None),
             on_disconnect: std::sync::RwLock::new(None),
@@ -1176,6 +1193,8 @@ async fn handle_connection(
         cookies: String,
         wants_msgpack: bool,
         authorization: Option<String>,
+        path: String,
+        forwarded_for: Option<String>,
     }
     let handshake_data: Arc<std::sync::OnceLock<HandshakeResult>> =
         Arc::new(std::sync::OnceLock::new());
@@ -1228,10 +1247,21 @@ async fn handle_connection(
                     .get("authorization")
                     .and_then(|v| v.to_str().ok())
                     .map(|s| s.to_string());
+                let path = req
+                    .uri()
+                    .path_and_query()
+                    .map_or_else(|| req.uri().path().to_string(), |pq| pq.as_str().to_string());
+                let forwarded_for = req
+                    .headers()
+                    .get("x-forwarded-for")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string());
                 let _ = hd_clone.set(HandshakeResult {
                     cookies,
                     wants_msgpack,
                     authorization,
+                    path,
+                    forwarded_for,
                 });
                 Ok(response)
             },
@@ -1251,13 +1281,15 @@ async fn handle_connection(
         }
     };
 
-    let (cookie_str, use_msgpack, auth_header) = handshake_data
+    let (cookie_str, use_msgpack, auth_header, hs_path, hs_forwarded_for) = handshake_data
         .get()
         .map(|hd| {
             (
                 hd.cookies.clone(),
                 hd.wants_msgpack,
                 hd.authorization.clone(),
+                hd.path.clone(),
+                hd.forwarded_for.clone(),
             )
         })
         .unwrap_or_default();
@@ -1414,9 +1446,16 @@ async fn handle_connection(
             });
         } else {
             // No JWT config — send cookies for Python to validate
+            let details = state.handshake_details.then(|| ConnectDetails {
+                authorization: auth_header.clone(),
+                path: hs_path.clone(),
+                remote_addr: addr.to_string(),
+                forwarded_for: hs_forwarded_for.clone(),
+            });
             state.push_inbound(InboundEvent::Connect {
                 conn_id: (*conn_id).clone(),
                 cookies: cookie_str.clone(),
+                details,
             });
         }
     } else {
@@ -2764,6 +2803,7 @@ struct ServerParams {
     max_subscriptions_per_connection: usize,
     max_pending_handshakes: usize,
     allowed_origins: Vec<String>,
+    handshake_details: bool,
     rate_limit_capacity: f64,
     rate_limit_refill: f64,
 }
@@ -2935,6 +2975,7 @@ impl RustWSEServer {
                 max_subscriptions_per_connection: srv.max_subscriptions_per_connection,
                 max_pending_handshakes: srv.max_pending_handshakes,
                 allowed_origins: srv.allowed_origins,
+                handshake_details: srv.handshake_details,
             })),
             cmd_tx: None,
             thread_handle: None,
@@ -3080,10 +3121,10 @@ impl RustWSEServer {
     /// compression, encryption, ping/pong). Python handles application logic
     /// via drain mode or callbacks.
     #[new]
-    #[pyo3(signature = (host, port, max_connections = 1000, jwt_secret = None, jwt_issuer = None, jwt_audience = None, jwt_cookie_name = None, jwt_previous_secret = None, jwt_key_id = None, jwt_algorithm = None, jwt_private_key = None, max_inbound_queue_size = 131072, recovery_enabled = false, recovery_buffer_size = 128, recovery_ttl = 300, recovery_max_messages = 500, recovery_memory_budget = 268435456, presence_enabled = false, presence_max_data_size = 4096, presence_max_members = 0, rate_limit_capacity = 100_000.0, rate_limit_refill = 10_000.0, max_message_size = 1_048_576, ping_interval = 25, idle_timeout = 60, max_outbound_queue_bytes = 16_777_216, max_subscriptions_per_connection = 0, max_pending_handshakes = 512, allowed_origins = None))]
+    #[pyo3(signature = (host, port, max_connections = 1000, jwt_secret = None, jwt_issuer = None, jwt_audience = None, jwt_cookie_name = None, jwt_previous_secret = None, jwt_key_id = None, jwt_algorithm = None, jwt_private_key = None, max_inbound_queue_size = 131072, recovery_enabled = false, recovery_buffer_size = 128, recovery_ttl = 300, recovery_max_messages = 500, recovery_memory_budget = 268435456, presence_enabled = false, presence_max_data_size = 4096, presence_max_members = 0, rate_limit_capacity = 100_000.0, rate_limit_refill = 10_000.0, max_message_size = 1_048_576, ping_interval = 25, idle_timeout = 60, max_outbound_queue_bytes = 16_777_216, max_subscriptions_per_connection = 0, max_pending_handshakes = 512, allowed_origins = None, handshake_details = false))]
     #[expect(
         clippy::too_many_arguments,
-        reason = "PyO3 __init__: 29 Python kwargs with defaults"
+        reason = "PyO3 __init__: 30 Python kwargs with defaults"
     )]
     fn new(
         host: String,
@@ -3115,6 +3156,7 @@ impl RustWSEServer {
         max_subscriptions_per_connection: usize,
         max_pending_handshakes: usize,
         allowed_origins: Option<Vec<String>>,
+        handshake_details: bool,
     ) -> PyResult<Self> {
         Self::build(
             host,
@@ -3129,6 +3171,7 @@ impl RustWSEServer {
                 max_subscriptions_per_connection,
                 max_pending_handshakes,
                 allowed_origins: allowed_origins.unwrap_or_default(),
+                handshake_details,
                 rate_limit_capacity,
                 rate_limit_refill,
             },
@@ -4213,13 +4256,29 @@ impl RustWSEServer {
         let list = PyList::empty(py);
         for event in &events {
             match event {
-                InboundEvent::Connect { conn_id, cookies } => {
+                InboundEvent::Connect {
+                    conn_id,
+                    cookies,
+                    details,
+                } => {
+                    let payload: Bound<'_, PyAny> = match details {
+                        Some(d) => {
+                            let dict = PyDict::new(py);
+                            dict.set_item("cookies", cookies.as_str())?;
+                            dict.set_item("authorization", d.authorization.as_deref())?;
+                            dict.set_item("path", d.path.as_str())?;
+                            dict.set_item("remote_addr", d.remote_addr.as_str())?;
+                            dict.set_item("forwarded_for", d.forwarded_for.as_deref())?;
+                            dict.into_any()
+                        }
+                        None => cookies.as_str().into_pyobject(py).unwrap().into_any(),
+                    };
                     let tuple = PyTuple::new(
                         py,
                         &[
                             "connect".into_pyobject(py).unwrap().into_any(),
                             conn_id.as_str().into_pyobject(py).unwrap().into_any(),
-                            cookies.as_str().into_pyobject(py).unwrap().into_any(),
+                            payload,
                         ],
                     )?;
                     list.append(tuple)?;

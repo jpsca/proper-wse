@@ -19,6 +19,9 @@
 > - The pending-bytes count of a connection drops with each write to its socket, not
 >   when a whole backlog is written.
 > - Wheels for free-threaded Python (cp314t, cp315t) besides abi3, and for musl (Alpine) Linux.
+> - `handshake_details`: the `connect` event carries a dict with the cookies, the
+>   `Authorization` header, the path with its query string, the peer address and
+>   `X-Forwarded-For`, instead of the cookies alone.
 
 [![PyPI](https://img.shields.io/pypi/v/proper-wse)](https://pypi.org/project/proper-wse/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -194,6 +197,7 @@ token = rust_jwt_encode(
 | `max_subscriptions_per_connection` | 0 | Max topics per connection (0 = unlimited). Prevents topic explosion DoS |
 | `max_pending_handshakes` | 512 | Max connections between accept and registration at once. Past it, new connections get `503` with `Retry-After: 1`. Raise it if thousands of clients may reconnect at once (e.g. after a restart) |
 | `allowed_origins` | None | Browser origins allowed to connect (e.g. `["https://example.com"]`), besides the one whose host is the handshake's `Host`, which is always allowed. A handshake from another origin gets `403`; one without an `Origin` header (not a browser) is allowed. `None` allows any |
+| `handshake_details` | False | The `connect` event's payload is a dict (`cookies`, `authorization`, `path` with the query string, `remote_addr`, `forwarded_for`) instead of the cookies string |
 | `rate_limit_capacity` | 100000.0 | Token bucket capacity per connection |
 | `rate_limit_refill` | 10000.0 | Token bucket refill rate per second |
 | `max_message_size` | 1048576 | Maximum WebSocket frame size in bytes (default 1 MB) |
@@ -226,7 +230,7 @@ Each event is a tuple: `(event_type, conn_id, payload)`
 | Event Type | Trigger | Payload |
 |------------|---------|---------|
 | `"auth_connect"` | JWT-validated connection | user_id (string) |
-| `"connect"` | Connection without JWT | cookies (string) |
+| `"connect"` | Connection without JWT | cookies (string); with `handshake_details`, a dict: `cookies`, `authorization`, `path`, `remote_addr`, `forwarded_for` |
 | `"msg"` | Client sent WSE-prefixed JSON | parsed dict |
 | `"raw"` | Client sent plain text | raw string |
 | `"bin"` | Client sent binary frame | bytes |

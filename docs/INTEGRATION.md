@@ -220,7 +220,7 @@ while True:
 
 | Type | Trigger | ev[2] payload |
 |------|---------|---------------|
-| `"connect"` | New connection (no JWT configured) | cookies string |
+| `"connect"` | New connection (no JWT configured) | cookies string; with `handshake_details=True`, a dict: `cookies`, `authorization` (header or `None`), `path` (with the query string), `remote_addr` (peer), `forwarded_for` (`X-Forwarded-For` or `None`) |
 | `"auth_connect"` | JWT-validated connection | user_id string |
 | `"msg"` | Client sent WSE-prefixed JSON | parsed dict |
 | `"raw"` | Client sent non-JSON text | raw string |
