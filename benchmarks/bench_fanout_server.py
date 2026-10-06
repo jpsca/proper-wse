@@ -33,9 +33,9 @@ import os
 import signal
 import subprocess
 import sys
-import time
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from wse_server._wse_accel import RustWSEServer, rust_jwt_encode
 
@@ -57,25 +57,69 @@ def generate_tls_certs():
     srv_csr = f"{TLS_CERT_DIR}/server.csr"
     srv_crt = f"{TLS_CERT_DIR}/server.crt"
 
-    subprocess.run([
-        "openssl", "req", "-x509", "-newkey", "rsa:2048",
-        "-keyout", ca_key, "-out", ca_crt,
-        "-days", "1", "-nodes", "-subj", "/CN=wse-test-ca",
-    ], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-keyout",
+            ca_key,
+            "-out",
+            ca_crt,
+            "-days",
+            "1",
+            "-nodes",
+            "-subj",
+            "/CN=wse-test-ca",
+        ],
+        check=True,
+        capture_output=True,
+    )
 
-    subprocess.run([
-        "openssl", "req", "-newkey", "rsa:2048",
-        "-keyout", srv_key, "-out", srv_csr,
-        "-nodes", "-subj", "/CN=localhost",
-        "-addext", "subjectAltName=IP:127.0.0.1",
-    ], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-newkey",
+            "rsa:2048",
+            "-keyout",
+            srv_key,
+            "-out",
+            srv_csr,
+            "-nodes",
+            "-subj",
+            "/CN=localhost",
+            "-addext",
+            "subjectAltName=IP:127.0.0.1",
+        ],
+        check=True,
+        capture_output=True,
+    )
 
-    subprocess.run([
-        "openssl", "x509", "-req", "-in", srv_csr,
-        "-CA", ca_crt, "-CAkey", ca_key,
-        "-CAcreateserial", "-out", srv_crt, "-days", "1",
-        "-copy_extensions", "copyall",
-    ], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "openssl",
+            "x509",
+            "-req",
+            "-in",
+            srv_csr,
+            "-CA",
+            ca_crt,
+            "-CAkey",
+            ca_key,
+            "-CAcreateserial",
+            "-out",
+            srv_crt,
+            "-days",
+            "1",
+            "-copy_extensions",
+            "copyall",
+        ],
+        check=True,
+        capture_output=True,
+    )
 
     print(f"[fanout-server] TLS certs generated in {TLS_CERT_DIR}")
     return srv_crt, srv_key, ca_crt
@@ -191,21 +235,34 @@ def main():
     )
     parser.add_argument("--port", type=int, default=5006)
     parser.add_argument("--max-connections", type=int, default=150000)
-    parser.add_argument("--peers", nargs="+", default=None,
-                        help="Cluster peer addresses for cluster modes, e.g. 127.0.0.1:5007")
+    parser.add_argument(
+        "--peers",
+        nargs="+",
+        default=None,
+        help="Cluster peer addresses for cluster modes, e.g. 127.0.0.1:5007",
+    )
     parser.add_argument("--tls-cert", default=None, help="Path to TLS certificate PEM")
     parser.add_argument("--tls-key", default=None, help="Path to TLS private key PEM")
     parser.add_argument("--tls-ca", default=None, help="Path to CA certificate PEM")
-    parser.add_argument("--generate-tls", action="store_true",
-                        help=f"Generate self-signed test certs in {TLS_CERT_DIR}")
-    parser.add_argument("--cluster-port", type=int, default=None,
-                        help="Cluster listen port (separate from WebSocket port)")
-    parser.add_argument("--cluster-addr", default=None,
-                        help="Cluster advertise address host:port")
+    parser.add_argument(
+        "--generate-tls",
+        action="store_true",
+        help=f"Generate self-signed test certs in {TLS_CERT_DIR}",
+    )
+    parser.add_argument(
+        "--cluster-port",
+        type=int,
+        default=None,
+        help="Cluster listen port (separate from WebSocket port)",
+    )
+    parser.add_argument("--cluster-addr", default=None, help="Cluster advertise address host:port")
     args = parser.parse_args()
 
     if args.mode in ("cluster", "cluster-subscribe") and not args.peers and not args.cluster_port:
-        print("ERROR: --peers or --cluster-port required for cluster/cluster-subscribe mode", file=sys.stderr)
+        print(
+            "ERROR: --peers or --cluster-port required for cluster/cluster-subscribe mode",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if args.generate_tls:
@@ -263,9 +320,7 @@ def main():
     drain_thread.start()
 
     # Publish thread (broadcasts or publishes at max rate)
-    pub_thread = threading.Thread(
-        target=publish_loop, args=(server, args.mode, stop), daemon=True
-    )
+    pub_thread = threading.Thread(target=publish_loop, args=(server, args.mode, stop), daemon=True)
     pub_thread.start()
 
     # Wait for stop signal

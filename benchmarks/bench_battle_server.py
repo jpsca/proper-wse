@@ -46,9 +46,9 @@ import os
 import signal
 import subprocess
 import sys
-import time
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from wse_server._wse_accel import RustWSEServer, rust_jwt_encode
 

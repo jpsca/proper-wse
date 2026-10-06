@@ -30,7 +30,6 @@ import multiprocessing
 import os
 import statistics
 import sys
-import threading
 import time
 import zlib
 from datetime import datetime
@@ -40,12 +39,14 @@ from websockets.sync.client import connect as sync_ws_connect
 
 try:
     import msgpack as _msgpack
+
     HAS_MSGPACK = True
 except ImportError:
     HAS_MSGPACK = False
 
 try:
     import orjson as _orjson
+
     HAS_ORJSON = True
 except ImportError:
     HAS_ORJSON = False
@@ -201,7 +202,7 @@ async def close_all(connections: list):
 async def test_connection_storm(tiers: list[int], token: str):
     print_header(
         "TEST 1: Connection Storm",
-        "All connections opened as fast as possible per tier. Measures accept rate."
+        "All connections opened as fast as possible per tier. Measures accept rate.",
     )
 
     for n in tiers:
@@ -265,7 +266,7 @@ async def test_connection_storm(tiers: list[int], token: str):
 async def test_echo_latency(tiers: list[int], token: str):
     print_header(
         "TEST 2: Ping/Pong Latency Under Concurrent Load",
-        "N persistent connections, each pinging 20x. Measures tail latency."
+        "N persistent connections, each pinging 20x. Measures tail latency.",
     )
 
     for n in tiers:
@@ -310,7 +311,17 @@ async def test_echo_latency(tiers: list[int], token: str):
 # =============================================================================
 
 
-def _throughput_worker(worker_id, host, port, token, duration, result_queue, start_event, payload_bytes=None, ready_counter=None):
+def _throughput_worker(
+    worker_id,
+    host,
+    port,
+    token,
+    duration,
+    result_queue,
+    start_event,
+    payload_bytes=None,
+    ready_counter=None,
+):
     """One process = one sync websocket, tight send loop. True parallelism."""
     time.sleep(worker_id * 0.003)  # stagger connections (3ms per worker)
 
@@ -359,7 +370,9 @@ def _throughput_worker(worker_id, host, port, token, duration, result_queue, sta
     result_queue.put(result)
 
 
-def _throughput_worker_async(proc_id, n_conns, host, port, token, duration, result_queue, start_event, payload_bytes=None):
+def _throughput_worker_async(
+    proc_id, n_conns, host, port, token, duration, result_queue, start_event, payload_bytes=None
+):
     """One process manages N async websocket connections. For high concurrency (2K+).
 
     Uses asyncio to multiplex many connections per process, avoiding the OS limit
@@ -380,8 +393,11 @@ def _throughput_worker_async(proc_id, n_conns, host, port, token, duration, resu
 
             async def _connect():
                 ws = await websockets.connect(
-                    uri, additional_headers=headers,
-                    open_timeout=30, max_size=2**20, ping_interval=None,
+                    uri,
+                    additional_headers=headers,
+                    open_timeout=30,
+                    max_size=2**20,
+                    ping_interval=None,
                 )
                 while True:
                     msg = await asyncio.wait_for(ws.recv(), timeout=15)
@@ -431,10 +447,15 @@ def _throughput_worker_async(proc_id, n_conns, host, port, token, duration, resu
                 pass
 
         total = sum(counts)
-        result_queue.put({
-            "id": proc_id, "count": total, "elapsed": elapsed,
-            "ok_conns": ok_conns, "err_conns": errs,
-        })
+        result_queue.put(
+            {
+                "id": proc_id,
+                "count": total,
+                "elapsed": elapsed,
+                "ok_conns": ok_conns,
+                "err_conns": errs,
+            }
+        )
 
     asyncio.run(_run())
 
@@ -459,7 +480,9 @@ def _run_throughput_tier(n: int, token: str, duration: int, payload: str = None,
     return _run_throughput_tier_sync(n, token, duration, msg_bytes, msg_size, label)
 
 
-def _run_throughput_tier_sync(n: int, token: str, duration: int, msg_bytes, msg_size: int, label: str):
+def _run_throughput_tier_sync(
+    n: int, token: str, duration: int, msg_bytes, msg_size: int, label: str
+):
     """1 process per connection. Best throughput, limited to ~1500 connections."""
     result_queue = multiprocessing.Queue()
     start_event = multiprocessing.Event()
@@ -473,7 +496,17 @@ def _run_throughput_tier_sync(n: int, token: str, duration: int, msg_bytes, msg_
         for i in range(s, e):
             p = multiprocessing.Process(
                 target=_throughput_worker,
-                args=(i, WS_HOST, WS_PORT, token, duration, result_queue, start_event, msg_bytes, ready_counter),
+                args=(
+                    i,
+                    WS_HOST,
+                    WS_PORT,
+                    token,
+                    duration,
+                    result_queue,
+                    start_event,
+                    msg_bytes,
+                    ready_counter,
+                ),
                 daemon=True,
             )
             p.start()
@@ -527,7 +560,9 @@ def _run_throughput_tier_sync(n: int, token: str, duration: int, msg_bytes, msg_
     errs = n - ok
 
     if missing > 0 or zero_count > 0:
-        sys.stdout.write(f"\r    {label}  [diag] results={len(results)}, ok={ok}, zero_count={zero_count}, missing/killed={missing}\n")
+        sys.stdout.write(
+            f"\r    {label}  [diag] results={len(results)}, ok={ok}, zero_count={zero_count}, missing/killed={missing}\n"
+        )
         sys.stdout.flush()
 
     # Show first few error details for debugging
@@ -547,7 +582,9 @@ def _run_throughput_tier_sync(n: int, token: str, duration: int, msg_bytes, msg_
     return rate, per_conn, mb_s, ok, errs, msg_size
 
 
-def _run_throughput_tier_async(n: int, token: str, duration: int, msg_bytes, msg_size: int, label: str):
+def _run_throughput_tier_async(
+    n: int, token: str, duration: int, msg_bytes, msg_size: int, label: str
+):
     """Multiple async connections per process. Scales to 10K+ connections."""
     cpu = os.cpu_count() or 8
     n_procs = min(cpu, 32, n)  # one process per core, max 32
@@ -567,13 +604,15 @@ def _run_throughput_tier_async(n: int, token: str, duration: int, msg_bytes, msg
         )
         p.start()
         processes.append(p)
-        sys.stdout.write(f"\r    {label}Proc {i+1}/{n_procs} ({c} conns)...")
+        sys.stdout.write(f"\r    {label}Proc {i + 1}/{n_procs} ({c} conns)...")
         sys.stdout.flush()
 
     # Wait for all processes to connect their websockets
     # Batched at 100/proc with 50ms gaps: (conns_per_proc/100)*0.05 + handshake overhead
     connect_est = (conns_per_proc / 100) * 0.05 + 15
-    sys.stdout.write(f"\r    {label}{n_procs} procs x ~{conns_per_proc} conns = {n}, connecting ({connect_est:.0f}s)...")
+    sys.stdout.write(
+        f"\r    {label}{n_procs} procs x ~{conns_per_proc} conns = {n}, connecting ({connect_est:.0f}s)..."
+    )
     sys.stdout.flush()
     time.sleep(connect_est)
 
@@ -607,16 +646,20 @@ def test_throughput(tiers: list[int], token: str, duration: int):
     print_header(
         "TEST 3: Throughput Saturation",
         f"1 process per connection, tight send loop. {SMALL_SIZE}-byte JSON msgs for {duration}s.\n"
-        f"  Max practical: ~1000 connections on 64 cores (OS scheduling limit)."
+        f"  Max practical: ~1000 connections on 64 cores (OS scheduling limit).",
     )
 
-    print(f"\n  {'Conns':>8} | {'Mode':>5} | {'Total msg/s':>12} | {'Per-conn':>10} | {'MB/s':>8} | {'OK':>6} | {'Errors':>6}")
-    print(f"  {'-'*8}-+-{'-'*5}-+-{'-'*12}-+-{'-'*10}-+-{'-'*8}-+-{'-'*6}-+-{'-'*6}")
+    print(
+        f"\n  {'Conns':>8} | {'Mode':>5} | {'Total msg/s':>12} | {'Per-conn':>10} | {'MB/s':>8} | {'OK':>6} | {'Errors':>6}"
+    )
+    print(f"  {'-' * 8}-+-{'-' * 5}-+-{'-' * 12}-+-{'-' * 10}-+-{'-' * 8}-+-{'-' * 6}-+-{'-' * 6}")
 
     for n in tiers:
         mode = "async" if n > ASYNC_THRESHOLD else "sync"
         rate, per_conn, mb_s, ok, errs, _ = _run_throughput_tier(n, token, duration)
-        print(f"\r  {n:>8,} | {mode:>5} | {rate:>12,.0f} | {per_conn:>10,.0f} | {mb_s:>8.1f} | {ok:>6} | {errs:>6}")
+        print(
+            f"\r  {n:>8,} | {mode:>5} | {rate:>12,.0f} | {per_conn:>10,.0f} | {mb_s:>8.1f} | {ok:>6} | {errs:>6}"
+        )
         flush()
 
     print()
@@ -631,7 +674,7 @@ def test_throughput(tiers: list[int], token: str, duration: int):
 async def test_sustained(tiers: list[int], token: str, duration: int):
     print_header(
         "TEST 4: Sustained Connection Hold",
-        f"N connections held for {duration}s with periodic pings."
+        f"N connections held for {duration}s with periodic pings.",
     )
 
     for n in tiers:
@@ -698,11 +741,11 @@ async def test_sustained(tiers: list[int], token: str, duration: int):
 def test_json_comparison():
     print_header(
         "TEST 5: json vs orjson vs msgpack Serialization",
-        f"Payload: {SMALL_SIZE} bytes (trading message). 1M iterations."
+        f"Payload: {SMALL_SIZE} bytes (trading message). 1M iterations.",
     )
 
-    import timeit
     import gc
+    import timeit
 
     n = 1_000_000
 
@@ -714,13 +757,18 @@ def test_json_comparison():
     json_enc_us = json_enc / n * 1_000_000
     json_dec_us = json_dec / n * 1_000_000
 
-    print(f"\n  {'Library':>10} | {'Encode (us)':>11} | {'Decode (us)':>11} | {'Enc ops/s':>12} | {'Dec ops/s':>12} | {'Bytes':>6}")
-    print(f"  {'-'*10}-+-{'-'*11}-+-{'-'*11}-+-{'-'*12}-+-{'-'*12}-+-{'-'*6}")
-    print(f"  {'json':>10} | {json_enc_us:>11.3f} | {json_dec_us:>11.3f} | {n/json_enc:>12,.0f} | {n/json_dec:>12,.0f} | {SMALL_SIZE:>6}")
+    print(
+        f"\n  {'Library':>10} | {'Encode (us)':>11} | {'Decode (us)':>11} | {'Enc ops/s':>12} | {'Dec ops/s':>12} | {'Bytes':>6}"
+    )
+    print(f"  {'-' * 10}-+-{'-' * 11}-+-{'-' * 11}-+-{'-' * 12}-+-{'-' * 12}-+-{'-' * 6}")
+    print(
+        f"  {'json':>10} | {json_enc_us:>11.3f} | {json_dec_us:>11.3f} | {n / json_enc:>12,.0f} | {n / json_dec:>12,.0f} | {SMALL_SIZE:>6}"
+    )
 
     orjson_enc = orjson_dec = None
     try:
         import orjson
+
         orjson_bytes = orjson.dumps(SMALL_PAYLOAD)
         orjson_size = len(orjson_bytes)
 
@@ -732,13 +780,18 @@ def test_json_comparison():
         orjson_enc_us = orjson_enc / n * 1_000_000
         orjson_dec_us = orjson_dec / n * 1_000_000
 
-        print(f"  {'orjson':>10} | {orjson_enc_us:>11.3f} | {orjson_dec_us:>11.3f} | {n/orjson_enc:>12,.0f} | {n/orjson_dec:>12,.0f} | {orjson_size:>6}")
+        print(
+            f"  {'orjson':>10} | {orjson_enc_us:>11.3f} | {orjson_dec_us:>11.3f} | {n / orjson_enc:>12,.0f} | {n / orjson_dec:>12,.0f} | {orjson_size:>6}"
+        )
     except ImportError:
-        print(f"  {'orjson':>10} | {'N/A':>11} | {'N/A':>11} | {'not installed':>12} | {'':>12} | {'':>6}")
+        print(
+            f"  {'orjson':>10} | {'N/A':>11} | {'N/A':>11} | {'not installed':>12} | {'':>12} | {'':>6}"
+        )
 
     msgpack_enc = msgpack_dec = None
     try:
         import msgpack
+
         msgpack_bytes = msgpack.packb(SMALL_PAYLOAD)
         msgpack_size = len(msgpack_bytes)
 
@@ -750,16 +803,26 @@ def test_json_comparison():
         msgpack_enc_us = msgpack_enc / n * 1_000_000
         msgpack_dec_us = msgpack_dec / n * 1_000_000
 
-        print(f"  {'msgpack':>10} | {msgpack_enc_us:>11.3f} | {msgpack_dec_us:>11.3f} | {n/msgpack_enc:>12,.0f} | {n/msgpack_dec:>12,.0f} | {msgpack_size:>6}")
+        print(
+            f"  {'msgpack':>10} | {msgpack_enc_us:>11.3f} | {msgpack_dec_us:>11.3f} | {n / msgpack_enc:>12,.0f} | {n / msgpack_dec:>12,.0f} | {msgpack_size:>6}"
+        )
     except ImportError:
-        print(f"  {'msgpack':>10} | {'N/A':>11} | {'N/A':>11} | {'not installed':>12} | {'':>12} | {'':>6}")
+        print(
+            f"  {'msgpack':>10} | {'N/A':>11} | {'N/A':>11} | {'not installed':>12} | {'':>12} | {'':>6}"
+        )
 
     print()
     if orjson_enc:
-        print(f"    orjson vs json:   encode {json_enc/orjson_enc:.1f}x, decode {json_dec/orjson_dec:.1f}x")
+        print(
+            f"    orjson vs json:   encode {json_enc / orjson_enc:.1f}x, decode {json_dec / orjson_dec:.1f}x"
+        )
     if msgpack_enc:
-        print(f"    msgpack vs json:  encode {json_enc/msgpack_enc:.1f}x, decode {json_dec/msgpack_dec:.1f}x")
-        print(f"    msgpack size:     {msgpack_size} bytes ({100 - msgpack_size * 100 // SMALL_SIZE}% smaller than JSON)")
+        print(
+            f"    msgpack vs json:  encode {json_enc / msgpack_enc:.1f}x, decode {json_dec / msgpack_dec:.1f}x"
+        )
+        print(
+            f"    msgpack size:     {msgpack_size} bytes ({100 - msgpack_size * 100 // SMALL_SIZE}% smaller than JSON)"
+        )
     print(f"    Payload: {SMALL_SIZE} bytes (JSON)")
     print()
 
@@ -773,7 +836,7 @@ def test_message_sizes(token: str, duration: int, n_conns: int = 64):
     """Throughput at various message sizes using multiprocessing."""
     print_header(
         "TEST 6: Message Size Impact",
-        f"{n_conns} connections per size, {duration}s each. (1 proc per conn)"
+        f"{n_conns} connections per size, {duration}s each. (1 proc per conn)",
     )
 
     sizes = [
@@ -785,8 +848,10 @@ def test_message_sizes(token: str, duration: int, n_conns: int = 64):
         ("64KB", 65536),
     ]
 
-    print(f"\n  {'Size':>8} | {'Actual':>8} | {'Total msg/s':>12} | {'MB/s':>8} | {'GB/s':>6} | {'OK':>4} | {'Err':>4}")
-    print(f"  {'-'*8}-+-{'-'*8}-+-{'-'*12}-+-{'-'*8}-+-{'-'*6}-+-{'-'*4}-+-{'-'*4}")
+    print(
+        f"\n  {'Size':>8} | {'Actual':>8} | {'Total msg/s':>12} | {'MB/s':>8} | {'GB/s':>6} | {'OK':>4} | {'Err':>4}"
+    )
+    print(f"  {'-' * 8}-+-{'-' * 8}-+-{'-' * 12}-+-{'-' * 8}-+-{'-' * 6}-+-{'-' * 4}-+-{'-' * 4}")
 
     for label, target_size in sizes:
         payload = json.dumps({"t": "bench", "p": {"d": "x" * target_size}})
@@ -794,7 +859,9 @@ def test_message_sizes(token: str, duration: int, n_conns: int = 64):
             n_conns, token, duration, payload=payload, label=f"[{label}] "
         )
         gb_s = mb_s / 1024
-        print(f"\r  {label:>8} | {actual_size:>6}B | {rate:>12,.0f} | {mb_s:>8.1f} | {gb_s:>6.2f} | {ok:>4} | {errs:>4}")
+        print(
+            f"\r  {label:>8} | {actual_size:>6}B | {rate:>12,.0f} | {mb_s:>8.1f} | {gb_s:>6.2f} | {ok:>4} | {errs:>4}"
+        )
         flush()
 
     print()
@@ -810,7 +877,7 @@ def test_format_throughput(token: str, duration: int, n_conns: int = 500):
     """Compare JSON vs msgpack throughput over actual WebSocket connections."""
     print_header(
         "TEST 7: Wire Format Throughput (JSON vs msgpack)",
-        f"{n_conns} connections, {duration}s each. Same payload, different encoding."
+        f"{n_conns} connections, {duration}s each. Same payload, different encoding.",
     )
 
     formats = [
@@ -821,14 +888,18 @@ def test_format_throughput(token: str, duration: int, n_conns: int = 500):
     else:
         print("    msgpack not installed, skipping msgpack test")
 
-    print(f"\n  {'Format':>16} | {'Payload':>8} | {'Total msg/s':>12} | {'Per-conn':>10} | {'MB/s':>8} | {'OK':>6} | {'Err':>6}")
-    print(f"  {'-'*16}-+-{'-'*8}-+-{'-'*12}-+-{'-'*10}-+-{'-'*8}-+-{'-'*6}-+-{'-'*6}")
+    print(
+        f"\n  {'Format':>16} | {'Payload':>8} | {'Total msg/s':>12} | {'Per-conn':>10} | {'MB/s':>8} | {'OK':>6} | {'Err':>6}"
+    )
+    print(f"  {'-' * 16}-+-{'-' * 8}-+-{'-' * 12}-+-{'-' * 10}-+-{'-' * 8}-+-{'-' * 6}-+-{'-' * 6}")
 
     for fmt_label, payload, payload_size in formats:
         rate, per_conn, mb_s, ok, errs, _ = _run_throughput_tier(
             n_conns, token, duration, payload=payload, label=f"[{fmt_label[:6]}] "
         )
-        print(f"\r  {fmt_label:>16} | {payload_size:>6}B | {rate:>12,.0f} | {per_conn:>10,.0f} | {mb_s:>8.1f} | {ok:>6} | {errs:>6}")
+        print(
+            f"\r  {fmt_label:>16} | {payload_size:>6}B | {rate:>12,.0f} | {per_conn:>10,.0f} | {mb_s:>8.1f} | {ok:>6} | {errs:>6}"
+        )
         flush()
 
     print()
@@ -905,10 +976,16 @@ def main():
     parser.add_argument("--token", required=True, help="JWT token")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5006)
-    parser.add_argument("--tiers", default=",".join(str(t) for t in DEFAULT_TIERS),
-                        help="Connection tiers (default: 100,500,1000,2000,5000,10000)")
-    parser.add_argument("--tiers-heavy", default=",".join(str(t) for t in DEFAULT_TIERS_HEAVY),
-                        help="Tiers for heavy tests 3-4,6 (default: 100,500,1000)")
+    parser.add_argument(
+        "--tiers",
+        default=",".join(str(t) for t in DEFAULT_TIERS),
+        help="Connection tiers (default: 100,500,1000,2000,5000,10000)",
+    )
+    parser.add_argument(
+        "--tiers-heavy",
+        default=",".join(str(t) for t in DEFAULT_TIERS_HEAVY),
+        help="Tiers for heavy tests 3-4,6 (default: 100,500,1000)",
+    )
     parser.add_argument("--duration", type=int, default=5, help="Seconds per test (default: 5)")
     parser.add_argument("--tests", default="1,2,3,4,5,6,7", help="Tests to run (1-7, default: all)")
     args = parser.parse_args()
