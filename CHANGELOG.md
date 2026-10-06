@@ -8,6 +8,12 @@
 - Wheels for musl Linux (Alpine), x86_64 and aarch64; the release tests the x86_64 one on
   Alpine.
 
+### Fixed
+
+- rustls 0.23.45, for RUSTSEC-2026-0285 (TLS 1.3 handshake messages accepted across
+  encryption levels), in the cluster's TLS.
+- The musl wheel loads: mimalloc uses local-dynamic TLS there.
+
 ## v2.6.0 (2026-10-06)
 
 ### Added
