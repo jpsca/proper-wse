@@ -120,13 +120,27 @@ impl BroadcastQueue {
     }
 }
 
+/// Take `n` bytes off a connection's pending count.
+fn release_pending(pending: &AtomicUsize, n: usize) {
+    let _ = pending.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
+        Some(cur.saturating_sub(n))
+    });
+}
+
 /// Write `frames` in order with as few `writev` calls as the socket allows.
+/// Each write takes what it wrote off `pending` and adds it to `written`, so
+/// both are current while a long backlog drains, not only once it has; on an
+/// error, what was never written comes off `pending` too.
 async fn write_all_frames<W: tokio::io::AsyncWrite + Unpin>(
     w: &mut W,
     frames: &std::collections::VecDeque<Bytes>,
+    pending: &AtomicUsize,
+    written: &AtomicU64,
 ) -> std::io::Result<()> {
     use tokio::io::AsyncWriteExt;
     const MAX_IOV: usize = 512;
+    let total: usize = frames.iter().map(|f| f.len()).sum();
+    let mut done = 0; // bytes written so far
     let mut index = 0; // first frame not fully written
     let mut offset = 0; // bytes of it already written
     while index < frames.len() {
@@ -136,19 +150,27 @@ async fn write_all_frames<W: tokio::io::AsyncWrite + Unpin>(
         for frame in frames.iter().skip(index + 1).take(MAX_IOV - 1) {
             slices.push(std::io::IoSlice::new(frame));
         }
-        let mut written = w.write_vectored(&slices).await?;
-        if written == 0 {
-            return Err(std::io::ErrorKind::WriteZero.into());
-        }
-        while written > 0 {
+        let mut n = match w.write_vectored(&slices).await {
+            Ok(n) if n > 0 => n,
+            result => {
+                release_pending(pending, total - done);
+                return Err(result
+                    .err()
+                    .unwrap_or_else(|| std::io::ErrorKind::WriteZero.into()));
+            }
+        };
+        done += n;
+        release_pending(pending, n);
+        written.fetch_add(n as u64, Ordering::Relaxed);
+        while n > 0 {
             let left = frames[index].len() - offset;
-            if written >= left {
-                written -= left;
+            if n >= left {
+                n -= left;
                 index += 1;
                 offset = 0;
             } else {
-                offset += written;
-                written = 0;
+                offset += n;
+                n = 0;
             }
         }
     }
@@ -165,6 +187,12 @@ pub(crate) struct ConnectionHandle {
     pub(crate) broadcast_buf: Arc<parking_lot::Mutex<BroadcastQueue>>,
     /// Wakes write task when broadcast data is appended to broadcast_buf.
     pub(crate) broadcast_notify: Arc<tokio::sync::Notify>,
+    /// Bytes written to the socket since the connection opened: whether a
+    /// connection with a backlog is draining it.
+    pub(crate) written: Arc<AtomicU64>,
+    /// Ends the connection at once: no close handshake, which a client that
+    /// stopped reading would never let through.
+    pub(crate) abort: Arc<tokio::sync::Notify>,
 }
 
 // ---------------------------------------------------------------------------
@@ -337,6 +365,13 @@ pub(crate) enum ServerCommand {
     },
     Disconnect {
         conn_id: String,
+    },
+    AbortConnection {
+        conn_id: String,
+    },
+    GetBacklogs {
+        min_pending: usize,
+        reply: oneshot::Sender<Vec<(String, usize, u64)>>,
     },
     GetConnections {
         reply: oneshot::Sender<Vec<String>>,
@@ -1232,6 +1267,8 @@ async fn handle_connection(
     let mut write_half = write_half;
     let (tx, mut rx) = mpsc::unbounded_channel::<WsFrame>();
     let pending = Arc::new(AtomicUsize::new(0));
+    let written = Arc::new(AtomicU64::new(0));
+    let abort = Arc::new(tokio::sync::Notify::new());
     let broadcast_buf = Arc::new(parking_lot::Mutex::new(BroadcastQueue::new()));
     let broadcast_notify = Arc::new(tokio::sync::Notify::new());
     let drain = state.drain_mode.load(Ordering::Relaxed);
@@ -1342,6 +1379,8 @@ async fn handle_connection(
                 pending: pending.clone(),
                 broadcast_buf: broadcast_buf.clone(),
                 broadcast_notify: broadcast_notify.clone(),
+                written: written.clone(),
+                abort: abort.clone(),
             },
         );
         state.connection_count.store(conns.len(), Ordering::Relaxed);
@@ -1403,6 +1442,7 @@ async fn handle_connection(
     // Control messages (server_ready, pong, close, send_event, topic) go through mpsc.
     // Broadcast data goes through direct buffer (bypasses mpsc entirely).
     let pending_write = pending.clone();
+    let written_write = written.clone();
     let broadcast_buf_write = broadcast_buf;
     let broadcast_notify_write = broadcast_notify;
     let write_task = tokio::spawn(async move {
@@ -1429,17 +1469,12 @@ async fn handle_connection(
                 }
             };
             if let Some(frames) = broadcast_data {
-                let len: usize = frames.iter().map(|f| f.len()).sum();
-                if write_all_frames(&mut raw_write, &frames).await.is_err() {
-                    let _ =
-                        pending_write.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
-                            Some(cur.saturating_sub(len))
-                        });
+                if write_all_frames(&mut raw_write, &frames, &pending_write, &written_write)
+                    .await
+                    .is_err()
+                {
                     break;
                 }
-                let _ = pending_write.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
-                    Some(cur.saturating_sub(len))
-                });
                 continue; // check buffer again before blocking
             }
 
@@ -1516,6 +1551,9 @@ async fn handle_connection(
                     let _ = pending_write.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
                         Some(cur.saturating_sub(drained_bytes))
                     });
+                    if ok {
+                        written_write.fetch_add(drained_bytes as u64, Ordering::Relaxed);
+                    }
                     batch.clear();
 
                     if !ok {
@@ -1547,8 +1585,20 @@ async fn handle_connection(
     // (counted as rate-limited). Drain mode uses the bounded inbound_tx instead.
     let callback_sem = Arc::new(tokio::sync::Semaphore::new(MAX_INFLIGHT_CALLBACKS));
 
-    // Read loop
-    while let Some(Ok(msg)) = read_half.next().await {
+    // Read loop, until the client closes or the connection is aborted
+    let mut aborted = false;
+    loop {
+        let msg = tokio::select! {
+            biased;
+            _ = abort.notified() => {
+                aborted = true;
+                break;
+            }
+            next = read_half.next() => match next {
+                Some(Ok(msg)) => msg,
+                _ => break,
+            },
+        };
         match msg {
             Message::Text(text) => {
                 state
@@ -1928,6 +1978,9 @@ async fn handle_connection(
     // a disconnect event, skip the rest to avoid duplicate events.
     if already_removed {
         drop(tx);
+        if aborted {
+            write_task.abort(); // it may be stuck writing to a client that doesn't read
+        }
         let _ = write_task.await;
         return;
     }
@@ -2026,6 +2079,9 @@ async fn handle_connection(
         }
     }
     drop(tx);
+    if aborted {
+        write_task.abort(); // it may be stuck writing to a client that doesn't read
+    }
     let _ = write_task.await;
 }
 
@@ -2588,6 +2644,24 @@ async fn process_commands(
             ServerCommand::GetConnections { reply } => {
                 let guard = state.connections.read().await;
                 let _ = reply.send(guard.keys().cloned().collect());
+            }
+            ServerCommand::AbortConnection { conn_id } => {
+                let guard = state.connections.read().await;
+                if let Some(h) = guard.get(&conn_id) {
+                    h.abort.notify_one();
+                }
+            }
+            ServerCommand::GetBacklogs { min_pending, reply } => {
+                let guard = state.connections.read().await;
+                let rows = guard
+                    .iter()
+                    .filter_map(|(id, h)| {
+                        let pending = h.pending.load(Ordering::Relaxed);
+                        (pending >= min_pending)
+                            .then(|| (id.clone(), pending, h.written.load(Ordering::Relaxed)))
+                    })
+                    .collect();
+                let _ = reply.send(rows);
             }
             ServerCommand::Drain {
                 close_code,
@@ -4022,6 +4096,39 @@ impl RustWSEServer {
         let (reply_tx, reply_rx) = oneshot::channel();
         tx.send(ServerCommand::GetConnections { reply: reply_tx })
             .map_err(|_| PyRuntimeError::new_err("Channel closed"))?;
+        reply_rx
+            .blocking_recv()
+            .map_err(|_| PyRuntimeError::new_err("Reply dropped"))
+    }
+
+    /// End a connection at once, without the close handshake: for a client
+    /// that stopped reading, which a Close frame would never reach.
+    fn abort_connection(&self, conn_id: &str) -> PyResult<()> {
+        let tx = self
+            .cmd_tx
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("Not running"))?;
+        tx.send(ServerCommand::AbortConnection {
+            conn_id: conn_id.to_owned(),
+        })
+        .map_err(|_| PyRuntimeError::new_err("Channel closed"))?;
+        Ok(())
+    }
+
+    /// `(conn_id, pending bytes, bytes written so far)` of every connection
+    /// with at least `min_pending` bytes queued and not yet written. Two calls
+    /// some time apart tell a client that is slow from one that stopped reading.
+    fn connection_backlogs(&self, min_pending: usize) -> PyResult<Vec<(String, usize, u64)>> {
+        let tx = self
+            .cmd_tx
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("Not running"))?;
+        let (reply_tx, reply_rx) = oneshot::channel();
+        tx.send(ServerCommand::GetBacklogs {
+            min_pending,
+            reply: reply_tx,
+        })
+        .map_err(|_| PyRuntimeError::new_err("Channel closed"))?;
         reply_rx
             .blocking_recv()
             .map_err(|_| PyRuntimeError::new_err("Reply dropped"))
@@ -5540,6 +5647,8 @@ mod tests {
             pending: Arc::new(AtomicUsize::new(0)),
             broadcast_buf: Arc::new(parking_lot::Mutex::new(BroadcastQueue::new())),
             broadcast_notify: Arc::new(tokio::sync::Notify::new()),
+            written: Arc::new(AtomicU64::new(0)),
+            abort: Arc::new(tokio::sync::Notify::new()),
         };
         (h, rx)
     }

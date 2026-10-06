@@ -522,6 +522,53 @@ class TestBroadcastDelivery:
         finally:
             srv.stop()
 
+    @pytest.mark.asyncio
+    async def test_connection_backlogs_tell_stalled_from_draining(self, server_port):
+        """A client that doesn't read shows a backlog and no bytes written
+        since; once it reads, the bytes written grow."""
+        srv = make_bulk_server(server_port)
+        try:
+            ws = await connect_slow_reader(server_port, make_token())
+            await asyncio.wait_for(ws.recv(), timeout=2.0)
+            conn_id = drain_until(srv, "auth_connect")[1]
+            assert srv.connection_backlogs(1) == []
+            for i in range(self.COUNT):
+                srv.broadcast_all(bulk_message(i))
+            time.sleep(0.3)
+            ((cid, pending, written),) = srv.connection_backlogs(1_000_000)
+            assert cid == conn_id and pending > 1_000_000
+            time.sleep(0.3)
+            assert srv.connection_backlogs(1_000_000)[0][2] == written  # stalled
+            await recv_n(ws, self.COUNT)
+            deadline = time.monotonic() + 5
+            while srv.connection_backlogs(1) and time.monotonic() < deadline:
+                await asyncio.sleep(0.05)
+            assert srv.connection_backlogs(1) == []
+            await ws.close()
+        finally:
+            srv.stop()
+
+    @pytest.mark.asyncio
+    async def test_abort_ends_a_client_that_stopped_reading(self, server_port):
+        """A Close frame can't reach a client whose socket is full; an abort
+        ends the connection anyway, and its disconnect event follows."""
+        srv = make_bulk_server(server_port)
+        try:
+            ws = await connect_slow_reader(server_port, make_token())
+            await asyncio.wait_for(ws.recv(), timeout=2.0)
+            conn_id = drain_until(srv, "auth_connect")[1]
+            for i in range(self.COUNT):
+                srv.broadcast_all(bulk_message(i))
+            time.sleep(0.3)
+            srv.disconnect(conn_id)  # queued behind the backlog: nothing happens
+            time.sleep(0.3)
+            assert srv.get_connection_count() == 1
+            srv.abort_connection(conn_id)
+            assert drain_until(srv, "disconnect", timeout=3.0)[1] == conn_id
+            assert srv.get_connection_count() == 0
+        finally:
+            srv.stop()
+
 
 # ---------------------------------------------------------------------------
 # Subscriptions

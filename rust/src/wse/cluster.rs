@@ -4160,6 +4160,8 @@ mod tests {
                 pending: Arc::new(AtomicUsize::new(0)),
                 broadcast_buf: Arc::new(Mutex::new(BroadcastQueue::new())),
                 broadcast_notify: Arc::new(tokio::sync::Notify::new()),
+                written: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                abort: Arc::new(tokio::sync::Notify::new()),
             };
             members.push((format!("conn{i}"), h));
             _rxs.push(rx);

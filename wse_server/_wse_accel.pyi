@@ -483,6 +483,13 @@ class RustWSEServer:
     def get_topic_subscriber_count(self, topic: str) -> int:
         """Number of connections subscribed to a topic."""
         ...
+    def connection_backlogs(self, min_pending: int) -> list[tuple[str, int, int]]:
+        """(conn_id, pending bytes, bytes written so far) of every connection
+        with at least `min_pending` bytes queued and not yet written."""
+        ...
+    def abort_connection(self, conn_id: str) -> None:
+        """End a connection at once, without the close handshake."""
+        ...
     def topic_backlog(self, topic: str) -> tuple[int, int, int]:
         """(subscribers, pending bytes of all of them, pending bytes of the one
         furthest behind): what is queued for them and not yet written."""

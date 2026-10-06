@@ -13,6 +13,11 @@
 >   ([silvermpx/wse#73](https://github.com/silvermpx/wse/pull/73)). Logs go to stderr.
 > - `allowed_origins`: handshakes from other sites' pages get a `403`.
 > - `topic_backlog(topic)`: how far behind delivery is on a topic.
+> - `connection_backlogs(min_pending)` and `abort_connection(conn_id)`: find the clients
+>   that stopped reading (bytes pending, bytes written so far) and end them at once, which
+>   a Close frame queued behind their backlog can't do.
+> - The pending-bytes count of a connection drops with each write to its socket, not
+>   when a whole backlog is written.
 > - Wheels for free-threaded Python (cp314t) besides abi3.
 
 [![PyPI](https://img.shields.io/pypi/v/proper-wse)](https://pypi.org/project/proper-wse/)
