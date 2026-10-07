@@ -25,6 +25,8 @@
 > - `set_connection_user(conn_id, user_id)` and `untrack_presence(conn_id, topics)`, for
 >   presence on connections the application authenticates; the presence frames name their
 >   `topic`.
+> - `subscribe_node(topics)`: the node listens to cluster topics itself, as `cluster_msg`
+>   events, for the application's coordination between nodes.
 
 [![PyPI](https://img.shields.io/pypi/v/proper-wse)](https://pypi.org/project/proper-wse/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -240,6 +242,7 @@ Each event is a tuple: `(event_type, conn_id, payload)`
 | `"disconnect"` | Connection closed | None |
 | `"presence_join"` | User's first connection joined a topic | dict with user_id, topic, data |
 | `"presence_leave"` | User's last connection left a topic | dict with user_id, topic, data |
+| `"cluster_msg"` | Another node published to a topic of `subscribe_node()` | dict with topic, data (the text as published) |
 
 **Callback mode** - alternative to drain mode. Callbacks are invoked via `spawn_blocking` per event.
 
@@ -367,6 +370,8 @@ server.connect_cluster(
     cluster_port=9999,
 )
 
+server.subscribe_node(["control"])   # Listen to a topic as the node: other nodes' messages come as "cluster_msg" events
+server.unsubscribe_node(["control"])
 server.cluster_connected()       # True if connected to at least one peer
 server.cluster_peers_count()     # Number of active peer connections
 server.cluster_info()            # List of connected peers (address, instance_id, connected)

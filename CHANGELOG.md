@@ -10,6 +10,10 @@
 - `set_connection_user(conn_id, user_id)`: the identity presence tracks a connection under,
   for connections the application authenticates itself (without JWT, presence had none).
 - `untrack_presence(conn_id, topics)`: leave the presence of topics without unsubscribing.
+- `subscribe_node(topics)` and `unsubscribe_node(topics)`: the node itself listens to
+  topics of the cluster; what the other nodes publish to them comes out of
+  `drain_inbound()` as `("cluster_msg", None, {"topic", "data"})`, for the application's
+  own coordination between nodes.
 
 ### Changed
 

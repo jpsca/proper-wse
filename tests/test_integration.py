@@ -12,7 +12,7 @@ import time
 import pytest
 import websockets
 
-from tests.conftest import make_token
+from tests.conftest import _next_port, make_token
 from wse_server._wse_accel import RustWSEServer
 
 # ---------------------------------------------------------------------------
@@ -865,6 +865,57 @@ class TestServerLifecycle:
                 await ws.close()
         finally:
             srv.stop()
+
+
+# ---------------------------------------------------------------------------
+# Cluster
+# ---------------------------------------------------------------------------
+
+
+class TestCluster:
+    def _node(self, port, cluster_port, peers):
+        srv = RustWSEServer("127.0.0.1", port, max_connections=10)
+        srv.enable_drain_mode()
+        srv.start()
+        time.sleep(0.05)
+        srv.connect_cluster(peers=peers, cluster_port=cluster_port)
+        return srv
+
+    @pytest.mark.asyncio
+    async def test_a_node_listens_to_topics_itself(self):
+        """`subscribe_node`: what the other nodes publish to a topic comes
+        out of `drain_inbound` as `cluster_msg`; not what the node itself
+        publishes, nor after `unsubscribe_node`."""
+        port_a, port_b = _next_port(), _next_port()
+        cport_a, cport_b = _next_port(), _next_port()
+        a = self._node(port_a, cport_a, [f"127.0.0.1:{cport_b}"])
+        b = self._node(port_b, cport_b, [f"127.0.0.1:{cport_a}"])
+        try:
+            deadline = time.monotonic() + 5
+            while not (a.cluster_connected() and b.cluster_connected()):
+                assert time.monotonic() < deadline, "the nodes never met"
+                time.sleep(0.05)
+            b.subscribe_node(["control"])
+            time.sleep(0.3)  # the SUB reaches a
+
+            a.broadcast("control", '{"t": "x", "p": {"n": 1}}')
+            ev = drain_until(b, "cluster_msg", timeout=3.0)
+            assert ev[1] is None
+            assert ev[2]["topic"] == "control"
+            assert json.loads(ev[2]["data"])["p"] == {"n": 1}
+
+            b.broadcast("control", '{"t": "x", "p": {"n": 2}}')  # its own: not an event
+            time.sleep(0.2)
+            assert not any(e[0] == "cluster_msg" for e in drain_all(b))
+
+            b.unsubscribe_node(["control"])
+            time.sleep(0.3)
+            a.broadcast("control", '{"t": "x", "p": {"n": 3}}')
+            time.sleep(0.3)
+            assert not any(e[0] == "cluster_msg" for e in drain_all(b))
+        finally:
+            a.stop()
+            b.stop()
 
 
 # ---------------------------------------------------------------------------

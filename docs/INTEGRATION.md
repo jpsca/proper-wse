@@ -228,6 +228,7 @@ while True:
 | `"disconnect"` | Connection closed | None |
 | `"presence_join"` | User's first connection joined a topic | dict: topic, user_id, data |
 | `"presence_leave"` | User's last connection left a topic | dict: topic, user_id, data |
+| `"cluster_msg"` | Another node published to a topic the node listens to (`subscribe_node(topics)`) | dict: topic, data (the text as published) |
 
 ### Callback Mode (alternative)
 

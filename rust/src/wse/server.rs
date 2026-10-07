@@ -285,7 +285,7 @@ fn clone_tcp_stream(stream: TcpStream) -> std::io::Result<(TcpStream, TcpStream)
 /// Inbound event types pushed to drain queue.
 /// All events go through one FIFO queue to preserve ordering.
 /// What a handshake had besides the cookies (`handshake_details`).
-struct ConnectDetails {
+pub(crate) struct ConnectDetails {
     authorization: Option<String>,
     /// The request path, with its query string.
     path: String,
@@ -293,7 +293,7 @@ struct ConnectDetails {
     forwarded_for: Option<String>,
 }
 
-enum InboundEvent {
+pub(crate) enum InboundEvent {
     Connect {
         conn_id: String,
         cookies: String,
@@ -329,6 +329,12 @@ enum InboundEvent {
         topic: String,
         user_id: String,
         data: serde_json::Value,
+    },
+    /// A message another node published to a topic this node listens to
+    /// itself (`subscribe_node`).
+    ClusterMsg {
+        topic: String,
+        data: String,
     },
 }
 
@@ -475,6 +481,9 @@ pub(crate) struct SharedState {
     pub(crate) cluster_interest_tx:
         std::sync::RwLock<Option<mpsc::UnboundedSender<super::cluster::InterestUpdate>>>,
     pub(crate) local_topic_refcount: Arc<std::sync::Mutex<HashMap<String, usize>>>,
+    /// Topics the node itself listens to (`subscribe_node`): what other
+    /// nodes publish to them comes out of `drain_inbound` as `cluster_msg`.
+    pub(crate) node_topics: DashSet<String>,
     // True when cluster TLS is configured (reject cluster connections on main port)
     cluster_tls_enabled: AtomicBool,
     // ArcSwap holder for hot-reloading cluster TLS certificates at runtime
@@ -554,6 +563,7 @@ impl SharedState {
             cluster_instance_id: std::sync::Mutex::new(None),
             cluster_interest_tx: std::sync::RwLock::new(None),
             local_topic_refcount: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            node_topics: DashSet::new(),
             cluster_tls_enabled: AtomicBool::new(false),
             cluster_tls_holder: std::sync::RwLock::new(None),
             recovery: cfg.recovery,
@@ -592,7 +602,7 @@ impl SharedState {
 
     /// Push an event to the drain channel (lock-free, non-blocking).
     /// When channel is full, drops the event and increments counter.
-    fn push_inbound(&self, event: InboundEvent) {
+    pub(crate) fn push_inbound(&self, event: InboundEvent) {
         if self.inbound_tx.try_send(event).is_err() {
             self.inbound_dropped.fetch_add(1, Ordering::Relaxed);
         }
@@ -3095,6 +3105,7 @@ impl RustWSEServer {
             recovery: self.shared.recovery.clone(),
             topic_message_counts: self.shared.topic_message_counts.clone(),
             queue_groups: self.shared.queue_groups.clone(),
+            node: self.shared.clone(),
         };
 
         rt_handle.spawn(super::cluster::cluster_manager(
@@ -4381,9 +4392,75 @@ impl RustWSEServer {
                     )?;
                     list.append(tuple)?;
                 }
+                InboundEvent::ClusterMsg { topic, data } => {
+                    let payload = PyDict::new(py);
+                    payload.set_item("topic", topic.as_str())?;
+                    payload.set_item("data", data.as_str())?;
+                    let tuple = PyTuple::new(
+                        py,
+                        &[
+                            PyString::new(py, "cluster_msg").into_any(),
+                            py.None().into_bound(py).into_any(),
+                            payload.into_any(),
+                        ],
+                    )?;
+                    list.append(tuple)?;
+                }
             }
         }
         Ok(list.unbind())
+    }
+
+    /// Have the node itself listen to `topics`: what other nodes of the
+    /// cluster publish to them comes out of `drain_inbound()` as
+    /// `("cluster_msg", None, {"topic", "data"})`, the data as published.
+    /// Not what this node publishes. Interest is announced to the peers as
+    /// a subscription's is, now and on each resync.
+    fn subscribe_node(&self, topics: Vec<String>) -> PyResult<()> {
+        let cluster_tx = self.shared.cluster_cmd_tx.read().unwrap().clone();
+        let mut refcounts = self
+            .shared
+            .local_topic_refcount
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for topic in topics {
+            if !self.shared.node_topics.insert(topic.clone()) {
+                continue;
+            }
+            let count = refcounts.entry(topic.clone()).or_insert(0);
+            *count += 1;
+            if *count == 1
+                && let Some(ref tx) = cluster_tx
+            {
+                let _ = tx.send(ClusterCommand::Sub { topic });
+            }
+        }
+        Ok(())
+    }
+
+    /// Stop listening to `topics` (`subscribe_node`).
+    fn unsubscribe_node(&self, topics: Vec<String>) -> PyResult<()> {
+        let cluster_tx = self.shared.cluster_cmd_tx.read().unwrap().clone();
+        let mut refcounts = self
+            .shared
+            .local_topic_refcount
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for topic in topics {
+            if self.shared.node_topics.remove(&topic).is_none() {
+                continue;
+            }
+            if let Some(count) = refcounts.get_mut(&topic) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    refcounts.remove(&topic);
+                    if let Some(ref tx) = cluster_tx {
+                        let _ = tx.send(ClusterCommand::Unsub { topic });
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Number of inbound events dropped due to queue overflow.

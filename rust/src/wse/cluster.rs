@@ -111,6 +111,9 @@ pub(crate) struct ClusterContext {
     pub recovery: Option<Arc<super::recovery::RecoveryManager>>,
     pub topic_message_counts: Arc<DashMap<String, AtomicU64>>,
     pub queue_groups: Arc<DashMap<String, DashMap<String, super::server::QueueGroup>>>,
+    /// The node's own state: the topics it listens to itself, and the
+    /// inbound queue their messages go to.
+    pub node: Arc<super::server::SharedState>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1323,6 +1326,13 @@ async fn peer_dispatch_task(
         let mut total_dropped = 0u64;
 
         for (topic, payload, rec) in batch.drain(..) {
+            if ctx.node.node_topics.contains(&topic) {
+                ctx.node
+                    .push_inbound(super::server::InboundEvent::ClusterMsg {
+                        topic: topic.clone(),
+                        data: String::from_utf8_lossy(&payload).into_owned(),
+                    });
+            }
             let preframed = super::server::encode_ws_frame(0x01, &payload);
 
             // Store the UNFRAMED payload in the foreign recovery buffer (cross-node
@@ -2799,7 +2809,7 @@ async fn handle_cluster_inbound_generic<S>(
 pub(crate) async fn handle_cluster_inbound(
     stream: TcpStream,
     addr: SocketAddr,
-    shared: &super::server::SharedState,
+    shared: &Arc<super::server::SharedState>,
     interest_tx: mpsc::UnboundedSender<InterestUpdate>,
 ) {
     let instance_id = match shared
@@ -2862,6 +2872,7 @@ pub(crate) async fn handle_cluster_inbound(
         recovery: shared.recovery.clone(),
         topic_message_counts: shared.topic_message_counts.clone(),
         queue_groups: shared.queue_groups.clone(),
+        node: shared.clone(),
     };
 
     handle_cluster_inbound_generic(
