@@ -133,8 +133,11 @@ class TestConnectionLifecycle:
             async with await websockets.connect(ws_url(server_port)):
                 ev = drain_until(srv, "connect")
                 assert ev[2] == {
-                    "cookies": "", "authorization": None, "path": "/wse",
-                    "remote_addr": ev[2]["remote_addr"], "forwarded_for": None,
+                    "cookies": "",
+                    "authorization": None,
+                    "path": "/wse",
+                    "remote_addr": ev[2]["remote_addr"],
+                    "forwarded_for": None,
                 }
         finally:
             srv.stop()
@@ -954,7 +957,9 @@ class TestCluster:
             a.broadcast("prices", '{"t": "tick", "p": {"n": 2}}')
             await asyncio.wait_for(on_b.recv(), 2.0)
             # b recovers a's second message from its foreign buffer
-            result = b.subscribe_with_recovery(conn_b, ["prices"], recover=True, epoch=seen_b["e"], offset=0)
+            result = b.subscribe_with_recovery(
+                conn_b, ["prices"], recover=True, epoch=seen_b["e"], offset=0
+            )
             assert result["topics"]["prices"]["recovered"] is True
             replayed = json.loads(await asyncio.wait_for(on_b.recv(), 2.0))
             assert replayed["p"] == {"n": 2} and replayed["o"] == 1
@@ -990,7 +995,10 @@ class TestPresence:
             srv.set_connection_user(alice_id, "alice")
             srv.subscribe_connection(alice_id, ["room", "lobby"], {"name": "Alice"})
             ev = drain_until(srv, "presence_join", timeout=1.0)
-            assert ev[2] == {"topic": "room", "user_id": "alice", "data": {"name": "Alice"}} or ev[2]["topic"] == "lobby"
+            assert (
+                ev[2] == {"topic": "room", "user_id": "alice", "data": {"name": "Alice"}}
+                or ev[2]["topic"] == "lobby"
+            )
             frame = json.loads(await asyncio.wait_for(watcher.recv(), 2.0))
             assert frame["t"] == "presence_join"
             assert frame["p"] == {"topic": "room", "user_id": "alice", "data": {"name": "Alice"}}
