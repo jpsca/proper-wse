@@ -20,6 +20,14 @@
 - The `presence_join`, `presence_leave` and `presence_update` frames name their `topic`
   (`p.topic`), so a client subscribed to several topics can tell them apart.
 
+### Fixed
+
+- A `broadcast()` reached the other nodes' clients without its recovery stamp (`tp`/`e`/`o`),
+  and the position in the cluster frame's trailer was read from the buffer after the fact,
+  racing the local publication. The message is now stamped once, in `broadcast()`, and the
+  stamp travels with it: the publisher's clients, the peers' clients and both recovery
+  buffers see the same one.
+
 ## v2.6.2 (2026-10-06)
 
 ### Fixed

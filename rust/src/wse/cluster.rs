@@ -231,6 +231,9 @@ pub(crate) enum ClusterCommand {
     Publish {
         topic: String,
         payload: String,
+        /// The epoch and offset the publisher stamped the payload with, for
+        /// the peers' foreign recovery buffers.
+        recovery: Option<(u32, u64)>,
     },
     Sub {
         topic: String,
@@ -2155,9 +2158,9 @@ pub(crate) async fn cluster_manager(
         tokio::select! {
             cmd = cmd_rx.recv() => {
                 match cmd {
-                    Some(ClusterCommand::Publish { topic, payload }) => {
-                        // Get origin recovery position for cross-node recovery
-                        let rec_pos = ctx.recovery.as_ref().and_then(|rm| rm.get_position(&topic));
+                    Some(ClusterCommand::Publish { topic, payload, recovery }) => {
+                        // The position the publisher stamped the payload with
+                        let rec_pos = recovery;
 
                         // Pre-encode frames: with/without recovery, with/without compression
                         let recovery_compressed = if let Some((epoch, offset)) = rec_pos {

@@ -903,6 +903,7 @@ class TestCluster:
             assert ev[1] is None
             assert ev[2]["topic"] == "control"
             assert json.loads(ev[2]["data"])["p"] == {"n": 1}
+            assert "tp" not in json.loads(ev[2]["data"])  # no recovery on these nodes: no stamp
 
             b.broadcast("control", '{"t": "x", "p": {"n": 2}}')  # its own: not an event
             time.sleep(0.2)
@@ -913,6 +914,52 @@ class TestCluster:
             a.broadcast("control", '{"t": "x", "p": {"n": 3}}')
             time.sleep(0.3)
             assert not any(e[0] == "cluster_msg" for e in drain_all(b))
+        finally:
+            a.stop()
+            b.stop()
+
+    @pytest.mark.asyncio
+    async def test_a_broadcast_reaches_the_other_node_stamped(self):
+        """With recovery on, a client of the other node gets the publisher's
+        stamp, the same the publisher's own clients get, and the other node
+        can recover from it."""
+        port_a, port_b = _next_port(), _next_port()
+        cport_a, cport_b = _next_port(), _next_port()
+        a = RustWSEServer("127.0.0.1", port_a, max_connections=10, recovery_enabled=True)
+        b = RustWSEServer("127.0.0.1", port_b, max_connections=10, recovery_enabled=True)
+        for srv, cport, peer in ((a, cport_a, cport_b), (b, cport_b, cport_a)):
+            srv.enable_drain_mode()
+            srv.start()
+            time.sleep(0.05)
+            srv.connect_cluster(peers=[f"127.0.0.1:{peer}"], cluster_port=cport)
+        try:
+            deadline = time.monotonic() + 5
+            while not (a.cluster_connected() and b.cluster_connected()):
+                assert time.monotonic() < deadline, "the nodes never met"
+                time.sleep(0.05)
+            on_b = await websockets.connect(ws_url(port_b))
+            conn_b = drain_until(b, "connect")[1]
+            b.subscribe_connection(conn_b, ["prices"])
+            on_a = await websockets.connect(ws_url(port_a))
+            conn_a = drain_until(a, "connect")[1]
+            a.subscribe_connection(conn_a, ["prices"])
+            time.sleep(0.3)
+
+            a.broadcast("prices", '{"t": "tick", "p": {"n": 1}}')
+            seen_a = json.loads(await asyncio.wait_for(on_a.recv(), 2.0))
+            seen_b = json.loads(await asyncio.wait_for(on_b.recv(), 2.0))
+            assert seen_a == seen_b
+            assert (seen_b["tp"], seen_b["o"]) == ("prices", 0)
+
+            a.broadcast("prices", '{"t": "tick", "p": {"n": 2}}')
+            await asyncio.wait_for(on_b.recv(), 2.0)
+            # b recovers a's second message from its foreign buffer
+            result = b.subscribe_with_recovery(conn_b, ["prices"], recover=True, epoch=seen_b["e"], offset=0)
+            assert result["topics"]["prices"]["recovered"] is True
+            replayed = json.loads(await asyncio.wait_for(on_b.recv(), 2.0))
+            assert replayed["p"] == {"n": 2} and replayed["o"] == 1
+            await on_a.close()
+            await on_b.close()
         finally:
             a.stop()
             b.stop()

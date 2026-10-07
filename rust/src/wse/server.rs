@@ -5189,12 +5189,29 @@ impl RustWSEServer {
     fn broadcast(&self, topic: &str, data: &str) -> PyResult<()> {
         let data = inject_category(data);
 
+        // Stamped here, once, so the local subscribers, the peers' subscribers
+        // and both recovery buffers see the same `tp`/`e`/`o`.
+        let (data, recovery) = match self.shared.recovery {
+            Some(ref rm) => {
+                let mut position = None;
+                let stamped = rm.push_stamped(topic, |epoch, offset| {
+                    position = Some((epoch, offset));
+                    Bytes::from(stamp_recovery_fields(&data, topic, epoch, offset))
+                });
+                (
+                    String::from_utf8(stamped.to_vec()).unwrap_or(data),
+                    position,
+                )
+            }
+            None => (data, None),
+        };
+
         // Local dispatch (always)
         if let Some(ref tx) = self.cmd_tx {
             let _ = tx.send(ServerCommand::BroadcastLocal {
                 topic: topic.to_owned(),
                 data: data.clone(),
-                skip_recovery: false,
+                skip_recovery: true,
             });
         }
 
@@ -5204,6 +5221,7 @@ impl RustWSEServer {
             tx.send(ClusterCommand::Publish {
                 topic: topic.to_owned(),
                 payload: data,
+                recovery,
             })
             .map_err(|_| PyRuntimeError::new_err("Cluster command channel closed"))?;
         }
